@@ -1,4 +1,5 @@
 #ifndef __seam_initiate_c__
+#ifndef OMIT_SEAM_INITIATE
 #define __seam_initiate_c__
 
 void connection_check_phase2(void) {}
@@ -14,6 +15,10 @@ int initiate_ondemand(const ip_address *our_client
                               , bool held
                               , int whackfd
                               , struct xfrm_user_sec_ctx_ike *uctx
-                              , err_t why) {}
+                              , err_t why)
+{
+	return 0;
+}
 
+#endif /* OMIT_SEAM_INITIATE */
 #endif

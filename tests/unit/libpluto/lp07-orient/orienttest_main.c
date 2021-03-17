@@ -1,11 +1,8 @@
 int main(int argc, char *argv[])
 {
-    int   len;
     char *infile;
     char *conn_name;
-    int  lineno=0;
-    struct connection *c1;
-    struct state *st;
+    struct connection *c1 = NULL;
 
 #ifdef HAVE_EFENCE
     EF_PROTECT_FREE=1;
@@ -13,6 +10,7 @@ int main(int argc, char *argv[])
 
     progname = argv[0];
     leak_detective = 1;
+    pluto_shared_secrets_file = "/dev/null";
 
     if(argc < 3) {
 	fprintf(stderr, "Usage: %s <whackrecord> <conn-name>\n", progname);
@@ -47,7 +45,7 @@ int main(int argc, char *argv[])
         assert(orient(c1, pluto_port500));
     }
 
-    delete_connection(c1, TRUE);
+    delete_connection(c1, TRUE, FALSE);
 
     report_leaks();
 

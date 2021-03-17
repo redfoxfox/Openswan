@@ -47,6 +47,7 @@ int main(int argc, char *argv[])
     EF_PROTECT_FREE=1;
 #endif
 
+    unsetenv("TZ"); tzset();
     progname = argv[0];
     leak_detective = 1;
 
@@ -57,13 +58,15 @@ int main(int argc, char *argv[])
     }
     /* argv[1] == "-r" ?? */
 
+    oco = osw_init_options();
     tool_init_log();
     init_crypto();
     init_fake_vendorid();
     init_fake_secrets();
-    init_jamesjohnson_interface();
+    init_local_interface();
     init_demux();
     enable_debugging();
+    init_seam_kernelalgs();
 
     infile = NULL;
     conn_name = NULL;
@@ -94,6 +97,9 @@ int main(int argc, char *argv[])
     }
 
     cur_debugging = DBG_CONTROL|DBG_CONTROLMORE;
+#ifdef MORE_DEBUGGING
+    cur_debugging |= MORE_DEBUGGING;
+#endif
     if((whackmsgcount = readwhackmsg(infile)) < 1) {
         fprintf(stderr, "can not read whack infile: %s msgcount=%u\n", infile, whackmsgcount);
         exit(10);
@@ -119,7 +125,7 @@ int main(int argc, char *argv[])
         free_state(st);
     }
 
-    delete_connection(c1, TRUE);
+    delete_connection(c1, TRUE, FALSE);
 
     report_leaks();
 

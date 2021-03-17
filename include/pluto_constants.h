@@ -88,6 +88,12 @@ enum event_type {
 /* how long to keep a failed state open in case of retransmits */
 #define EVENT_HALF_OPEN_TIMEOUT                 60
 
+/* how long to delay deletion of conn when remote is behind NATT */
+#define EVENT_NATT_DELAY_REKEY_EXPIRE		20
+
+/* while replacing a parent SA, keep the old parent around */
+#define EVENT_REAUTH_IKE_SA_TIMEOUT             60
+
 
 /*
  * cryptographic helper operations.
@@ -375,6 +381,7 @@ enum phase1_role {
  */
 
 enum connection_kind {
+    CK_UNSET = 0,       /* no connection policy set yet */
     CK_GROUP,		/* policy group: instantiates to template */
     CK_TEMPLATE,	/* abstract connection, with wildcard */
     CK_PERMANENT,	/* normal connection */
@@ -532,6 +539,11 @@ enum pluto_policy {
 
 	POLICY_SAREF_TRACK    = LELEM(32), /* Saref tracking via _updown */
 	POLICY_SAREF_TRACK_CONNTRACK    = LELEM(33), /* use conntrack optimization */
+
+/* additional misc information */
+
+	POLICY_INVALID_CONFIG = LELEM(34), /* detected invalid/incompatible 'conn' ipsec.conf, should not negotiate */
+
 };
 
 /* Any IPsec policy?  If not, a connection description
@@ -541,8 +553,15 @@ enum pluto_policy {
  */
 #define HAS_IPSEC_POLICY(p) (((p) & POLICY_IPSEC_MASK) != 0)
 
+/* We mark the connection policy as INVALID_CONFIG when incompatible options
+ * are picked at add_connection() time. */
+#define IS_INVALID_CONFIG(p) ( (p) & POLICY_INVALID_CONFIG )
+
 /* Don't allow negotiation? */
-#define NEVER_NEGOTIATE(p)  (LDISJOINT((p), POLICY_PSK | POLICY_RSASIG | POLICY_AGGRESSIVE) || (((p)&POLICY_SHUNT_MASK)!=POLICY_SHUNT_TRAP))
+#define NEVER_NEGOTIATE(p)  ( LDISJOINT((p), POLICY_PSK | POLICY_RSASIG | POLICY_AGGRESSIVE) \
+			    || IS_INVALID_CONFIG(p) \
+			    || ( ((p) & POLICY_SHUNT_MASK) != POLICY_SHUNT_TRAP ) \
+			    )
 
 
 /* Oakley transform attributes
@@ -647,10 +666,14 @@ enum keyword_host {
     KH_IPADDR       = LOOSE_ENUM_OTHER,
 };
 /* keyword_name(&kw_host_list, type, buffer[KEYWORD_NAME_BUFLEN]) */
-struct keyword_enum_values kw_host_list;
+extern struct keyword_enum_values kw_host_list;
 #define KH_ISWILDCARD(type)  ((type) == KH_ANY || (type) == KH_DEFAULTROUTE)
 #define KH_ISKNOWNADDR(type) ((type) == KH_IPADDR || (type)==KH_IFACE)
 
+extern const char *end_type_name(enum keyword_host host_type
+                                 , ip_address *host_addr
+                                 , char  *outbuf
+                                 , size_t outbuf_len);
 /* BIND enumerated types */
 
 /* How authenticated is info that might have come from DNS?

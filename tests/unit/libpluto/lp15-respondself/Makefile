@@ -19,54 +19,8 @@ EXTRAFLAGS+=${USERCOMPILE} ${PORTINCLUDE} -I..
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/programs/pluto
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/include/pluto
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/include
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb_print.o
-EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG}
 
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/hostpair.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/virtual.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/rcv_whack.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/myid.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/foodgroups.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ipsec_doi.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_parent.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_child.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_notify.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_derived_keys.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_prfplus.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_x509.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/state.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/msgdigest.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/hmac.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/plutoalg.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/demux.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/db_ops.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/crypt_utils.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/cookie.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb_struct.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb_v2_struct.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/crypto.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2.o
-ifeq ($(USE_EXTRACRYPTO),true)
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_blowfish.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_twofish.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_serpent.o
-endif
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_aes.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_sha2.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/vendor.o
-EXTRALIBS+=${PLUTOLIB} ${CRYPTOLIBS} ${WHACKLIB}
-EXTRALIBS+=${LIBDESLITE} ${LIBAES}
-EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG} ${LIBOSWKEYS}
-EXTRALIBS+=${LIBPLUTO} ${CRYPTOLIBS} ${WHACKLIB}
-EXTRALIBS+=${LIBDESLITE} ${LIBAES}
-EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG}
-EXTRALIBS+=${NSS_LIBS} ${FIPS_LIBS}
-EXTRALIBS+=-lgmp ${LIBEFENCE} -lpcap  ${NSS_LIBS} ${FIPS_LIBS}
-
-EXTRAFLAGS+=${NSS_FLAGS}    ${FIPS_FLAGS}
-EXTRAFLAGS+=${NSS_HDRDIRS}  ${FIPS_HDRDIRS}
+include ../../libpluto/lp13-objectlist.make
 
 READWRITE=${OBJDIRTOP}/programs/readwriteconf/readwriteconf
 SAMPLEDIR=../samples
@@ -74,6 +28,8 @@ OUTPUTS=OUTPUT
 WHACKFILE=${OUTPUTS}/ikev2client.record.${ARCH}
 EF_DISABLE_BANNER=1
 export EF_DISABLE_BANNER
+
+FILTERS=sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed -f ${TESTUTILS}/certsize.sed -f ${TESTUTILS}/sanity.sed
 
 include Makefile.testcase
 
@@ -90,7 +46,7 @@ OUTPUT/R1-dump.txt:	${WHACKFILE} ${TESTNAME}
 	@echo "file ${TESTNAME}"          >.gdb1init
 	@echo "set args "${UNITTEST1ARGS} >>.gdb1init
 	ulimit -c unlimited && ./${TESTNAME} ${UNITTEST1ARGS} >OUTPUT/${TESTNAME}_1.txt 2>&1
-	@sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed OUTPUT/${TESTNAME}_1.txt | diff - output1.txt
+	@${FILTERS} OUTPUT/${TESTNAME}_1.txt | diff - output1.txt
 	tcpdump -n -t -v -r OUTPUT/${TESTNAME}.pcap | tee OUTPUT/R1-dump.txt | sed -f ${TESTUTILS}/sanity.sed | diff - R1-dump.txt
 
 ${WHACKFILE}: ${SAMPLEDIR}/${ENDNAME}.conf OUTPUT
@@ -98,7 +54,7 @@ ${WHACKFILE}: ${SAMPLEDIR}/${ENDNAME}.conf OUTPUT
 
 update: update1
 update1:
-	sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed OUTPUT/${TESTNAME}_1.txt >output1.txt
+	${FILTERS} OUTPUT/${TESTNAME}_1.txt >output1.txt
 	[ -f OUTPUT/R1-dump.txt ] && sed -f ${TESTUTILS}/sanity.sed OUTPUT/R1-dump.txt >R1-dump.txt
 
 clean:

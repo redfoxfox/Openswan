@@ -32,6 +32,7 @@
 #include <openswan/pfkeyv2.h>
 #include <openswan/pfkey.h>
 
+#include "fallthrough.h"
 #include "sysdep.h"
 #include "constants.h"
 #include "oswlog.h"
@@ -39,7 +40,7 @@
 #include "defs.h"
 #include "id.h"
 #include "pluto/connections.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "kernel.h"
 #include "kernel_pfkey.h"
 #include "timer.h"
@@ -549,7 +550,7 @@ mast_sag_eroute(struct state *st, const struct spd_route *sr
     case ERO_ADD:
     case ERO_ADD_INBOUND:
 	addop = TRUE;
-	/* fallthrough expected */
+        FALL_THROUGH; /* fallthrough */
     case ERO_REPLACE:
     case ERO_REPLACE_INBOUND:
     case ERO_DELETE:
@@ -609,7 +610,7 @@ const struct kernel_ops mast_kernel_ops = {
     get_spi: NULL,
     eroute_idle: pfkey_was_eroute_idle,
     inbound_eroute: FALSE,
-    policy_lifetime: FALSE,
+    scan_shunts: pfkey_scan_proc_shunts,
     init: init_pfkey,
     exceptsocket: NULL,
     docommand: mast_do_command,

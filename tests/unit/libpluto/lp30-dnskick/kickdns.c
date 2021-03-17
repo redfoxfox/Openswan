@@ -21,12 +21,11 @@
 #include "pluto/defs.h"
 #include "pluto/demux.h"
 #include "pluto/connections.h"
-#include "state.h"
+#include "pluto/state.h"
 
 #include "whackmsgtestlib.c"
 #include "seam_timer.c"
 #include "seam_vendor.c"
-#include "seam_fakevendor.c"
 #include "seam_pending.c"
 #include "seam_kernel.c"
 #include "seam_io.c"
@@ -47,6 +46,7 @@
 #include "seam_demux.c"
 #include "seam_x509.c"
 #include "seam_delete.c"
+#include "seam_ke.c"
 
 const char *progname=NULL;
 int verbose=0;
@@ -70,11 +70,8 @@ static void init_fake_secrets(void)
 int main(int argc, char *argv[])
 {
     bool  recalculate = FALSE;
-    int   len;
-    err_t err = NULL;
     char *infile;
     char *conn_name;
-    int  lineno=0;
     struct connection *c1 = NULL;
 
 #ifdef HAVE_EFENCE
@@ -95,6 +92,8 @@ int main(int argc, char *argv[])
         recalculate = 1;    /* do all crypto */
         argc--; argv++;
     }
+
+    (void)recalculate;
 
     tool_init_log();
     load_oswcrypto();

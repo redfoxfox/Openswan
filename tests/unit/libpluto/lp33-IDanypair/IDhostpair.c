@@ -18,7 +18,6 @@
 #include "whackmsgtestlib.c"
 #include "seam_timer.c"
 #include "seam_vendor.c"
-#include "seam_fakevendor.c"
 #include "seam_pending.c"
 #include "seam_initiate.c"
 #include "seam_ikev1.c"
@@ -37,8 +36,7 @@
 #include "seam_natt.c"
 #include "seam_dnskey.c"
 #include "seam_x509_list.c"
-
-#include "seam_keys.c"
+#include "seam_ke.c"
 
 #include "seam_host_jamesjohnson.c"
 #define TESTNAME "IDhostpair"
@@ -58,13 +56,8 @@ static void init_fake_secrets(void)
 
 int main(int argc, char *argv[])
 {
-    int   len;
     char *infile;
-    char *conn_name;
-    int  lineno=0;
     int  regression = 0;
-    struct connection *c1;
-    struct state *st;
 
 #ifdef HAVE_EFENCE
     EF_PROTECT_FREE=1;
@@ -84,6 +77,8 @@ int main(int argc, char *argv[])
         regression = 1;
         argc--; argv++;
     }
+
+    (void)regression;
 
     tool_init_log();
     load_oswcrypto();

@@ -17,7 +17,6 @@
 
 #include "whackmsgtestlib.c"
 #include "seam_timer.c"
-#include "seam_fakevendor.c"
 #include "seam_pending.c"
 #include "seam_initiate.c"
 #include "seam_ikev1.c"
@@ -32,10 +31,10 @@
 #include "seam_spdbstruct.c"
 #include "seam_demux.c"
 #include "seam_whack.c"
-#include "seam_keys.c"
 #include "seam_exitlog.c"
 #include "seam_dnskey.c"
 #include "seam_natt.c"
+#include "seam_rsasig.c"
 
 #include "seam_gi_sha1.c"
 #include "seam_finish.c"
@@ -45,12 +44,9 @@ u_int8_t reply_buffer[MAX_OUTPUT_UDP_SIZE];
 int main(int argc, char *argv[])
 {
     int   i;
-    int   len;
     char *infile;
     char *conn_name;
-    int  lineno=0;
     struct connection *c1;
-    struct state *st;
 
 #ifdef HAVE_EFENCE
     EF_PROTECT_FREE=1;
@@ -58,6 +54,7 @@ int main(int argc, char *argv[])
 
     progname = argv[0];
     leak_detective = 1;
+    pluto_shared_secrets_file = "/dev/null";
 
     if(argc < 3) {
 	fprintf(stderr, "Usage: %s <whackrecord> <conn-name>\n", progname);
@@ -104,7 +101,7 @@ int main(int argc, char *argv[])
     for(i=0; i < argc; i++) {
         conn_name = argv[i];
         c1 = con_by_name(conn_name, TRUE);
-        delete_connection(c1, TRUE);
+        delete_connection(c1, TRUE, FALSE);
     }
 
     report_leaks();

@@ -43,12 +43,12 @@
 #include "pgp.h"
 #include "certs.h"
 #include "pluto/connections.h"        /* needs id.h */
-#include "state.h"
+#include "pluto/state.h"
 #include "packet.h"
 #include "md5.h"
 #include "sha1.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
-#include "ike_alg.h"
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/ike_alg.h"
 #include "log.h"
 #include "demux.h"        /* needs packet.h */
 #include "ikev2.h"
@@ -225,7 +225,6 @@ stf_status ikev2_emit_ts(struct msg_digest *md   UNUSED
 stf_status ikev2_calc_emit_ts(struct msg_digest *md
 			      , pb_stream *outpbs
 			      , enum phase1_role role
-                              , unsigned int next_payload UNUSED
 			      , struct connection *c0
 			      , lset_t policy UNUSED)
 {
@@ -548,6 +547,61 @@ int ikev2_evaluate_connection_port_fit(const struct connection *d,
     return bestfit_p;
 }
 
+/* checks the TSi/TSr selectors to make sure they are valid,
+ * returns v2N_NOTHING_WRONG on success, or v2N_ error code otherwise */
+static int ikev2_validate_transport_proposal(struct connection *d
+					     , struct state *st
+					     , enum phase1_role role
+					     , struct traffic_selector *tsi
+					     , struct traffic_selector *tsr
+					     , unsigned int tsi_n
+					     , unsigned int tsr_n)
+{
+    unsigned int tsi_ni, tsr_ni;
+    char a0[SUBNETTOT_BUF];
+    char a1[SUBNETTOT_BUF];
+
+    (void)d;
+    (void)st;
+    (void)role;
+
+    for(tsi_ni = 0; tsi_ni < tsi_n; tsi_ni++) {
+
+	if (sameaddr(&tsi[tsi_ni].low, &tsi[tsi_ni].high))
+	    continue;
+
+	/* proposal contains an address range, which is not compatible
+	 * with a transport mode connection */
+
+	addrtot(&tsi[tsi_ni].low, 0, a0, sizeof(a0));
+	addrtot(&tsi[tsi_ni].high, 0, a1, sizeof(a1));
+
+	loglog(RC_LOG_SERIOUS, "received TSi[%d] selector with range %s~%s, "
+	       "incompatible with TRANSPORT mode -- refusing",
+	       tsi_ni, a0, a1);
+	return v2N_TS_UNACCEPTABLE;
+    }
+
+    for(tsr_ni=0; tsr_ni<tsr_n; tsr_ni++) {
+
+	if (sameaddr(&tsr[tsr_ni].low, &tsr[tsr_ni].high))
+	    continue;
+
+	/* proposal contains an address range, which is not compatible
+	 * with a transport mode connection */
+
+	addrtot(&tsr[tsr_ni].low, 0, a0, sizeof(a0));
+	addrtot(&tsr[tsr_ni].high, 0, a1, sizeof(a1));
+
+	loglog(RC_LOG_SERIOUS, "received TSr[%d] selector with %s~%s, "
+	       "incompatible with TRANSPORT mode -- refusing",
+	       tsr_ni, a0, a1);
+	return v2N_TS_UNACCEPTABLE;
+    }
+
+    return v2N_NOTHING_WRONG; // 0
+}
+
 int ikev2_evaluate_connection_fit(struct connection *d
                                   , struct state *st
 				  , struct spd_route *sr
@@ -571,15 +625,30 @@ int ikev2_evaluate_connection_fit(struct connection *d
 	er = &sr->this;
     }
 
+    if(!ei->has_client && ei->host_type == KH_ANY) {
+	/* here, fill in new end with actual client info from the state */
+	fei = *ei;
+	ei  = &fei;
+	addrtosubnet(&st->st_remoteaddr, &fei.client);
+    }
+
+    if(!er->has_client && er->host_type == KH_ANY) {
+	/* here, fill in new end with actual client info from the state */
+	fer = *er;
+	er  = &fer;
+	addrtosubnet(&st->st_remoteaddr, &fer.client);
+    }
+
     DBG(DBG_CONTROLMORE,
     {
 	char ei3[SUBNETTOT_BUF];
 	char er3[SUBNETTOT_BUF];
         if(ei->has_client) {
             subnettot(&ei->client,  0, ei3, sizeof(ei3));
+	} else if(ei->host_type == KH_ANY) {
+	    strcpy(ei3, "<self>");
         } else {
             strcpy(ei3, "<noclient>");
-
             /* here, fill in new end with actual client info from the state */
             if(ei->host_type == KH_ANY) {
                 fei = *ei;
@@ -591,9 +660,10 @@ int ikev2_evaluate_connection_fit(struct connection *d
 
         if(er->has_client) {
             subnettot(&er->client,  0, er3, sizeof(er3));
+	} else if(er->host_type == KH_ANY) {
+            strcpy(er3, "<self>");
         } else {
-            strcpy(er3, "<noclient");
-
+            strcpy(er3, "<noclient>");
             /* here, fill in new end with actual client info from the state */
             if(er->host_type == KH_ANY) {
                 fer = *er;
@@ -626,9 +696,10 @@ int ikev2_evaluate_connection_fit(struct connection *d
 		addrtot(&tsr[tsr_ni].low,  0, lbr, sizeof(lbr));
 		addrtot(&tsr[tsr_ni].high, 0, hbr, sizeof(hbr));
 
-		DBG_log("    tsi[%u]=%s/%s proto=%d portrange %d-%d, tsr[%u]=%s/%s proto=%d portrange %d-%d"
+		DBG_log("    tsi[%u]=%s/%s proto=%d portrange %d-%d"
 			, tsi_ni, lbi, hbi
-			,  tsi[tsi_ni].ipprotoid, tsi[tsi_ni].startport, tsi[tsi_ni].endport
+			,  tsi[tsi_ni].ipprotoid, tsi[tsi_ni].startport, tsi[tsi_ni].endport);
+		DBG_log("    tsr[%u]=%s/%s proto=%d portrange %d-%d"
 			, tsr_ni, lbr, hbr
 			,  tsr[tsr_ni].ipprotoid, tsr[tsr_ni].startport, tsr[tsr_ni].endport);
 	    }
@@ -639,6 +710,15 @@ int ikev2_evaluate_connection_fit(struct connection *d
 	     * NOTE: Our parser/config only allows 1 CIDR, however IKEv2 ranges can be non-CIDR
 	     *       for now we really support/limit ourselves to a single CIDR
 	     */
+#if 0
+            /* enable this when debugging to keep compiler from optimizing these out */
+            __asm__ __volatile__("" :: "m" (tsi));
+            __asm__ __volatile__("" :: "m" (ei));
+            __asm__ __volatile__("" :: "m" (tsr));
+            __asm__ __volatile__("" :: "m" (er));
+            __asm__ __volatile__("" :: "m" (tsi_ni));
+            __asm__ __volatile__("" :: "m" (tsr_ni));
+#endif
 	    if(addrinsubnet(&tsi[tsi_ni].low, &ei->client)
 	       && addrinsubnet(&tsi[tsi_ni].high, &ei->client)
 	       && addrinsubnet(&tsr[tsr_ni].low,  &er->client)
@@ -698,41 +778,30 @@ int ikev2_evaluate_connection_fit(struct connection *d
     return bestfit;
 }
 
-stf_status ikev2_child_sa_respond(struct msg_digest *md
-                                  , struct state *st1
-                                  , pb_stream *outpbs)
+stf_status ikev2_child_ts_evaluate(struct traffic_selector tsi[16]
+                                   , unsigned int tsi_n
+                                   , struct traffic_selector tsr[16]
+                                   , unsigned int tsr_n
+                                   , enum phase1_role role
+                                   , struct state *pst
+                                   , struct connection *c
+                                   , struct connection **best_c
+                                   , struct spd_route  **best_sr)
 {
-    struct state      *pst = md->pst;
-    struct connection *c   = NULL;
-    /* struct connection *cb; */
-    struct payload_digest *const sa_pd = md->chain[ISAKMP_NEXT_v2SA];
-    stf_status ret;
-    struct payload_digest *const tsi_pd = md->chain[ISAKMP_NEXT_v2TSi];
-    struct payload_digest *const tsr_pd = md->chain[ISAKMP_NEXT_v2TSr];
-    struct traffic_selector tsi[16], tsr[16];
-    unsigned int tsi_n, tsr_n;
-
-    if(pst == NULL) pst = md->st;
-    c = pst->st_connection;
-
-    /*
-     * now look at provided TSx, and see if these fit the connection
-     * that we have, and narrow them if necessary.
-     */
-    tsi_n = ikev2_parse_ts(tsi_pd, tsi, 16);
-    tsr_n = ikev2_parse_ts(tsr_pd, tsr, 16);
+    int bestfit_n, newfit, bestfit_p;
+    struct connection *b = c;
+    struct spd_route *sra, *bsr;
 
     /*
      * now walk through all connections and see if this connection
      * was in fact the best.
      *
      * similar to find_client_connection/fc_try.
+     *
+     * preserve {} for comparison purposes until code verified by unit test cases
      */
     {
-	struct connection *b = c;
 	struct connection *d;
-	int bestfit_n, newfit, bestfit_p;
-	struct spd_route *sra, *bsr;
 	struct IDhost_pair *hp = NULL;
 	int best_tsi_i ,  best_tsr_i;
 
@@ -741,13 +810,14 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
 	bestfit_p = -1;
 	best_tsi_i =  best_tsr_i = -1;
 
-        DBG(DBG_CONTROLMORE, DBG_log("ikev2_evaluate_connection_fit, evaluating base fit for %s", c->name));
+        DBG(DBG_CONTROLMORE, DBG_log("ikev2_child_ts_evaluate, evaluating base fit for %s against tsi=%u,tsr=%u traffic selectors"
+                                     , c->name, tsi_n, tsr_n));
 	for (sra = &c->spd; sra != NULL; sra = sra->next) {
-            int bfit_n=ikev2_evaluate_connection_fit(c,pst,sra,RESPONDER,tsi,tsr,tsi_n,
+            int bfit_n=ikev2_evaluate_connection_fit(c,pst,sra,role,tsi,tsr,tsi_n,
                                                      tsr_n);
             if (bfit_n > bestfit_n) {
                 DBG(DBG_CONTROLMORE, DBG_log("bfit_n=ikev2_evaluate_connection_fit found better fit c %s", c->name));
-                int bfit_p =  ikev2_evaluate_connection_port_fit (c,sra,RESPONDER,tsi,tsr,
+                int bfit_p =  ikev2_evaluate_connection_port_fit (c,sra,role,tsi,tsr,
                                                                   tsi_n,tsr_n, &best_tsi_i, &best_tsr_i);
                 if (bfit_p > bestfit_p) {
                     DBG(DBG_CONTROLMORE, DBG_log("ikev2_evaluate_connection_port_fit found better fit c %s, tsi[%d],tsr[%d]"
@@ -761,6 +831,19 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
             else
                 DBG(DBG_CONTROLMORE, DBG_log("prefix range fit c %s c->name was rejected by Traffic Selectors"
                                              , c->name));
+        }
+
+        /*
+         * if we found something (anything in this policy) that fit,
+         * then we should conclude with it (we are done).
+         * only if we did not find matching traffic selectors should we go
+         * on and check other policies between the same hosts/IDs for
+         * other policies that work.
+         */
+        if(bestfit_n > 0) {
+            if(best_c)   *best_c = b;
+            if(best_sr)  *best_sr = bsr;
+            return STF_OK;
         }
 
 	for (sra = &c->spd; hp==NULL && sra != NULL; sra = sra->next) {
@@ -784,22 +867,18 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
 
             for (d = hp->connections; d != NULL; d = d->IDhp_next) {
                 struct spd_route *sr;
-                int wildcards, pathlen;  /* XXX */
 
                 /* if already best fit, do not try again */
                 if(d == c) continue;
 
+                /* groups are abstract concepts, and can not match */
                 if (d->policy & POLICY_GROUP)
                     continue;
 
-                if (!(same_id(&c->spd.this.id, &d->spd.this.id)
-                      && match_id(&c->spd.that.id, &d->spd.that.id, &wildcards)
-                      && trusted_ca(c->spd.that.ca, d->spd.that.ca, &pathlen)))
-                    continue;
 
 
                 for (sr = &d->spd; sr != NULL; sr = sr->next) {
-                    newfit=ikev2_evaluate_connection_fit(d,pst, sr,RESPONDER
+                    newfit=ikev2_evaluate_connection_fit(d,pst, sr,role
                                                          ,tsi,tsr,tsi_n,tsr_n);
                     if(newfit > bestfit_n) {  /// will complicated this with narrowing
                         int bfit_p;
@@ -812,7 +891,7 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
                         bsr = sr;
 
                         /* now look at port fit, it might be even better! */
-                        bfit_p =  ikev2_evaluate_connection_port_fit (c ,sra,RESPONDER,tsi,tsr,
+                        bfit_p =  ikev2_evaluate_connection_port_fit (c ,sra,role,tsi,tsr,
                                                                           tsi_n,tsr_n, &best_tsi_i, &best_tsr_i);
                         if (bfit_p > bestfit_p) {
                             DBG(DBG_CONTROLMORE, DBG_log("ikev2_evaluate_connection_port_fit found better fit d %s, tsi[%d],tsr[%d]"
@@ -827,6 +906,49 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
                 }
             }
         }
+    }
+
+    if(bestfit_n > 0 && b != NULL) {
+        DBG(DBG_CONTROLMORE, DBG_log("ikev2_evaluate_connection_fit, concluded with %s", b->name));
+
+        if(best_c)  *best_c = b;
+        if(best_sr) *best_sr = bsr;
+        return STF_OK;
+    } else {
+        return STF_FAIL + v2N_TS_UNACCEPTABLE;
+    }
+}
+
+
+stf_status ikev2_child_sa_respond(struct msg_digest *md
+                                  , struct state *st1
+                                  , pb_stream *outpbs)
+{
+    struct state      *pst = md->pst;
+    struct connection *c   = NULL;
+    /* struct connection *cb; */
+    struct payload_digest *const sa_pd = md->chain[ISAKMP_NEXT_v2SA];
+    stf_status ret;
+    struct payload_digest *const tsi_pd = md->chain[ISAKMP_NEXT_v2TSi];
+    struct payload_digest *const tsr_pd = md->chain[ISAKMP_NEXT_v2TSr];
+    struct traffic_selector tsi[16], tsr[16];
+    unsigned int tsi_n, tsr_n;
+    struct connection *b;
+
+    if(pst == NULL) pst = md->st;
+    b = c = pst->st_connection;
+
+    /*
+     * now look at provided TSx, and see if these fit the connection
+     * that we have, and narrow them if necessary.
+     */
+    tsi_n = ikev2_parse_ts(tsi_pd, tsi, 16);
+    tsr_n = ikev2_parse_ts(tsr_pd, tsr, 16);
+
+    {
+	struct spd_route *bsr = NULL;
+
+        ret = ikev2_child_ts_evaluate(tsi, tsi_n, tsr, tsr_n, RESPONDER, pst, c, &b, &bsr);
 
         DBG(DBG_CONTROLMORE, DBG_log("ikev2_evaluate_connection_fit, concluded with %s", b->name));
 	/*
@@ -904,27 +1026,18 @@ stf_status ikev2_child_sa_respond(struct msg_digest *md
 
         /* we do not delete_state st1 yet, because initiator could retransmit */
         if (rn != NOTHING_WRONG) {
+            close_output_pbs(&r_sa_pbs);
             //delete_event(st1);
             event_schedule(EVENT_SO_DISCARD, EVENT_HALF_OPEN_TIMEOUT, st1);
             return STF_FAIL + rn;
         }
     }
 
-    {
-        unsigned int next_payload = ISAKMP_NEXT_NONE;
-        struct payload_digest *p;
-        for(p = md->chain[ISAKMP_NEXT_v2N]; p != NULL; p = p->next) {
-            if ( p->payload.v2n.isan_type == v2N_USE_TRANSPORT_MODE ) {
-                next_payload = ISAKMP_NEXT_v2N;
-                break;
-            }
-        }
-
-        ret = ikev2_calc_emit_ts(md, outpbs, RESPONDER, next_payload
-                                 , c, c->policy);
-        if(ret != STF_OK) {
-            return ret;
-        }
+    /* role is always RESPONDER, since we are replying to a request */
+    ret = ikev2_calc_emit_ts(md, outpbs, RESPONDER
+                             , c, c->policy);
+    if(ret != STF_OK) {
+        return ret;
     }
 
     {
@@ -1030,8 +1143,8 @@ stf_status ikev2child_outC1(int whack_sock
     st = duplicate_state(parentst);
     st->st_whack_sock = whack_sock;
     ret = allocate_msgid_from_parent(parentst, &st->st_msgid);
-
-    if(ret != STF_OK) return ret;
+    if(ret != STF_OK)
+	    return ret;
 
     insert_state(st);
 
@@ -1106,7 +1219,7 @@ ikev2child_outC1_continue(struct pluto_crypto_req_cont *pcrc
     passert(cur_state == NULL);
     passert(st != NULL);
 
-    passert(st->st_suspended_md == dh->md);
+    assert_suspended(st, dh->md);
     set_suspended(st,NULL);        /* no longer connected or suspended */
 
     set_cur_state(st);
@@ -1152,6 +1265,9 @@ ikev2child_outC1_tail(struct pluto_crypto_req_cont *pcrc
         unpack_v2KE(st, r, &st->st_gi);
         unpack_nonce(&st->st_ni, r);
     }
+
+    /* enable NAT-T keepalives, if necessary */
+    ikev2_enable_nat_keepalives(st);
 
     /* beginning of data going out */
     authstart = reply_stream.cur;
@@ -1232,19 +1348,15 @@ ikev2child_outC1_tail(struct pluto_crypto_req_cont *pcrc
     if(c0) {
         lset_t policy = c0->policy;
         chunk_t child_spi, notify_data;
-        unsigned int next_payload = ISAKMP_NEXT_NONE;
         st->st_connection = c0;
-
-        if( !(st->st_connection->policy & POLICY_TUNNEL) ) {
-            next_payload = ISAKMP_NEXT_v2N;
-        }
 
         ikev2_emit_ipsec_sa(md,&e_pbs_cipher,ISAKMP_NEXT_v2TSi,c0, policy);
 
         st->st_ts_this = ikev2_end_to_ts(&c0->spd.this, st->st_localaddr);
         st->st_ts_that = ikev2_end_to_ts(&c0->spd.that, st->st_remoteaddr);
 
-        ikev2_calc_emit_ts(md, &e_pbs_cipher, role, next_payload, c0, policy);
+	/* role is always INITIATOR, since we are making to a request */
+        ikev2_calc_emit_ts(md, &e_pbs_cipher, INITIATOR, c0, policy);
 
         if( !(st->st_connection->policy & POLICY_TUNNEL) ) {
             DBG_log("Initiator child policy is transport mode, sending v2N_USE_TRANSPORT_MODE");
@@ -1333,6 +1445,14 @@ static stf_status ikev2child_inCI1_pfs(struct msg_digest *md)
 {
     struct state *st = md->st;
 
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
+
     loglog(RC_COMMENT, "msgid=%u CHILD_SA PFS rekey message received from %s:%u on %s (port=%d)"
            , md->msgid_received
            , ip_str(&md->sender), (unsigned)md->sender_port
@@ -1380,7 +1500,7 @@ static stf_status ikev2child_inCI1_nopfs(struct msg_digest *md)
     rn = accept_v2_nonce(md, &st->st_ni, "Ni");
     if(rn != v2N_NOTHING_WRONG) {
         enum isakmp_xchg_types xchg = md->hdr.isa_xchg;
-        send_v2_notification_from_state(st, xchg, rn, NULL);
+        send_v2_notification_enc(md, xchg, rn, NULL);
         loglog(RC_LOG_SERIOUS, "no valid Nonce payload found");
 	return STF_INTERNAL_ERROR;
     }
@@ -1396,6 +1516,8 @@ stf_status ikev2child_inCI1(struct msg_digest *md)
     struct state *parentst = md->st;   /* this is parent state! */
     struct state *st;
     struct connection *c;
+    enum phase1_role enc_role;
+    stf_status ret;
 
     md->pst = parentst;
     c = parentst->st_connection;
@@ -1413,24 +1535,14 @@ stf_status ikev2child_inCI1(struct msg_digest *md)
     event_schedule(EVENT_SO_DISCARD, 0, st);
 
     /* now decrypt payload and extract values */
-    if (IKEv2_IS_ORIG_INITIATOR(md->pst)) {
-        stf_status ret;
-	DBG(DBG_CONTROLMORE, DBG_log("decrypting payload as INITIATOR"));
-        ret = ikev2_decrypt_msg(md, INITIATOR);
-        if(ret != STF_OK) {
-            loglog(RC_LOG_SERIOUS, "unable to decrypt message");
-            delete_state(st);
-            return ret;
-        }
-    } else {
-        stf_status ret;
-	DBG(DBG_CONTROLMORE, DBG_log("decrypting payload as RESPONDER"));
-        ret = ikev2_decrypt_msg(md, RESPONDER);
-        if(ret != STF_OK) {
-            loglog(RC_LOG_SERIOUS, "unable to decrypt message");
-            delete_state(st);
-            return ret;
-        }
+    enc_role = IKEv2_ORIGINAL_ROLE(md->pst);
+    DBG(DBG_CONTROLMORE, DBG_log("decrypting payload as %s",
+			enc_role == INITIATOR ? "INITIATOR" : "RESPONDER" ));
+    ret = ikev2_decrypt_msg(md, enc_role);
+    if(ret != STF_OK) {
+	    loglog(RC_LOG_SERIOUS, "unable to decrypt message");
+	    delete_state(st);
+	    return ret;
     }
 
     if (md->chain[ISAKMP_NEXT_v2KE]) {
@@ -1491,7 +1603,7 @@ static void ikev2child_inCI1_continue1(struct pluto_crypto_req_cont *pcrc
     passert(cur_state == NULL);
     passert(st != NULL);
 
-    passert(st->st_suspended_md == ke->md);
+    assert_suspended(st, ke->md);
     set_suspended(st,NULL);        /* no longer connected or suspended */
     set_cur_state(st);
 
@@ -1514,7 +1626,7 @@ static void ikev2child_inCI1_continue1(struct pluto_crypto_req_cont *pcrc
     rn = accept_v2_nonce(md, &st->st_ni, "Ni");
     if(rn != v2N_NOTHING_WRONG) {
         enum isakmp_xchg_types xchg = md->hdr.isa_xchg;
-        send_v2_notification_from_state(st, xchg, rn, NULL);
+        send_v2_notification_enc(md, xchg, rn, NULL);
         loglog(RC_LOG_SERIOUS, "no valid Nonce payload found");
         goto returnerr;
     }
@@ -1540,7 +1652,8 @@ static void ikev2child_inCI1_continue1(struct pluto_crypto_req_cont *pcrc
     return;
 
  returnerr:
-    /* XXX send an error notification to initiator, from variable e */
+    /* error notification was already sent, kill the state */
+    md->st = NULL;
     delete_state(st);
     reset_globals();
     return;
@@ -1569,6 +1682,7 @@ static void ikev2child_inCI1_continue2(struct pluto_crypto_req_cont *pcrc
         return;
     }
 
+    assert_suspended(st, dh->md);
     set_suspended(st,NULL);        /* no longer connected or suspended */
     set_cur_state(st);
     st->st_calculating = FALSE;
@@ -1598,6 +1712,9 @@ ikev2child_inCI1_tail(struct msg_digest *md, struct state *st, bool dopfs)
     /* at this point, the child will be the one making the transition */
     set_cur_state(st);
     md->transition_state = st;
+
+    /* enable NAT-T keepalives, if necessary */
+    ikev2_enable_nat_keepalives(st);
 
     /* send response */
     {
@@ -1743,23 +1860,30 @@ static stf_status ikev2child_inCR1_decrypt(struct msg_digest *md)
 {
     struct state *st = md->st;
     v2_notification_t rn;
+    enum phase1_role enc_role;
+    stf_status ret;
 
     /* now decrypt payload and extract values */
-    {
-        stf_status ret;
-        ret = ikev2_decrypt_msg(md, INITIATOR);
-        if(ret != STF_OK) {
-            loglog(RC_LOG_SERIOUS, "unable to decrypt message");
-            /* XXX maybe try rekey again? */
-            return STF_FAIL;
-        }
+    enc_role = IKEv2_ORIGINAL_ROLE(st);
+    DBG(DBG_CONTROLMORE, DBG_log("decrypting payload as %s",
+			enc_role == INITIATOR ? "INITIATOR" : "RESPONDER" ));
+    ret = ikev2_decrypt_msg(md, enc_role);
+    if (ret == STF_IGNORE) {
+        /* already handled in notification handler */
+        return ret;
+
+    } else if (ret != STF_OK) {
+        /* something else went wrong */
+        loglog(RC_LOG_SERIOUS, "unable to decrypt message");
+        /* XXX maybe try rekey again? */
+        return STF_FAIL;
     }
 
     /* Nr in */
     rn = accept_v2_nonce(md, &st->st_nr, "Nr");
     if(rn != v2N_NOTHING_WRONG) {
         enum isakmp_xchg_types xchg = md->hdr.isa_xchg;
-        send_v2_notification_from_state(st, xchg, rn, NULL);
+        send_v2_notification_enc(md, xchg, rn, NULL);
         loglog(RC_LOG_SERIOUS, "no valid Nonce payload found");
         return STF_FAIL;
     }
@@ -1771,11 +1895,21 @@ static stf_status ikev2child_inCR1_pfs(struct msg_digest *md)
     struct state *st = md->st;
     stf_status e;
 
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
+
     /* Gr in */
     e = accept_v2_KE(md, st, &st->st_gr, "Gr");
     if(e != STF_OK) {
-        /* feel something shoud be done with e */
+        /* feel something should be done with e */
         loglog(RC_LOG_SERIOUS, "no valid KE payload found");
+        md->st = NULL;
+        delete_state(st);
         return STF_FAIL; /* XXX - invalid packet notify? */
     }
 
@@ -1818,6 +1952,32 @@ stf_status ikev2child_inCR1(struct msg_digest *md)
     }
 }
 
+/* We were expecting a positive acknowledgement to a CHILD_SA request we sent
+ * out, instead we got an encrypted notification.  We will log it, and
+ * cancel our request to avoid retransmission of the bad packet. */
+stf_status ikev2child_inCR1_ntf(struct msg_digest *md)
+{
+    struct state *st = md->st;
+    struct payload_digest *p;
+
+    set_cur_state(st);
+
+    for(p = md->chain[ISAKMP_NEXT_v2N]; p != NULL; p = p->next) {
+        /* did we get any notifications that make sense */
+
+        openswan_log("received notification %u: %s", p->payload.v2n.isan_type,
+                     enum_name(&ikev2_notify_names, p->payload.v2n.isan_type));
+
+    }
+
+    DBG(DBG_CONTROL, DBG_log("cleaning up state #%lu", st->st_serialno));
+
+    delete_event(st);
+    delete_state(st);
+
+    return STF_IGNORE;
+}
+
 /*
  * this function is called after g^xy is calculated on initiator,
  * and just collects the results, and calls inCR1_tail.
@@ -1841,6 +2001,7 @@ static void ikev2child_inCR1_continue(struct pluto_crypto_req_cont *pcrc
         return;
     }
 
+    assert_suspended(st, dh->md);
     set_suspended(st, NULL);        /* no longer connected or suspended */
     set_cur_state(st);
     st->st_calculating = FALSE;
@@ -1885,6 +2046,13 @@ stf_status ikev2_child_validate_responder_proposal(struct msg_digest *md
             , tsi_n,tsr_n);
     if (tsi_n < 0 || tsr_n < 0)
         return STF_FAIL + v2N_TS_UNACCEPTABLE;
+
+    if (!(c->policy & POLICY_TUNNEL)) {
+	int err = ikev2_validate_transport_proposal(c, st, INITIATOR,
+						    tsi, tsr, tsi_n, tsr_n);
+	if (err != v2N_NOTHING_WRONG)
+	    return STF_FAIL + err;
+    }
 
     {
         struct spd_route *sra ;
@@ -2056,6 +2224,23 @@ static stf_status ikev2child_inCR1_tail(struct msg_digest *md, struct state *st)
 
     if ((e = ikev2_child_notify_process(md, st)) != STF_OK) {
         return e;
+    }
+
+    /* if rekeying an existing connection, inherit tunnel/transport mode */
+    {
+        struct state *est;
+        est = state_with_serialno(c->newest_ipsec_sa);
+        if (est && est->st_esp.attrs.encapsulation != ENCAPSULATION_MODE_UNSPECIFIED) {
+            /* in that case, we will use the same mode */
+            st->st_esp.attrs.encapsulation = est->st_esp.attrs.encapsulation;
+            DBG(DBG_CONTROLMORE,
+                DBG_log("Rekeying #%lu from existing state #%lu, "
+                        "will inherit %s encapsulation (%d)",
+                        st->st_serialno, est->st_serialno,
+                        st->st_esp.attrs.encapsulation == ENCAPSULATION_MODE_TUNNEL ? "tunnel" :
+                        st->st_esp.attrs.encapsulation == ENCAPSULATION_MODE_TRANSPORT ? "transport" : "?",
+                        st->st_esp.attrs.encapsulation));
+        }
     }
 
     {

@@ -6,18 +6,11 @@
 #define PRINT_SA_DEBUG 1
 #define USE_KEYRR 1
 
-#include "constants.h"
-#include "oswalloc.h"
-#include "oswcrypto.h"
-#include "whack.h"
-#include "../../programs/pluto/rcv_whack.h"
-
-#include "../../programs/pluto/connections.c"
+#include "unit_test_includes.h"
 
 #include "whackmsgtestlib.c"
 #include "seam_debug.c"
 #include "seam_timer.c"
-#include "seam_fakevendor.c"
 #include "seam_pending.c"
 #include "seam_ikev1.c"
 #include "seam_crypt.c"
@@ -33,15 +26,15 @@
 #include "seam_commhandle.c"
 #include "seam_whack.c"
 #include "seam_initiate.c"
-#include "seam_keys.c"
 #include "seam_exitlog.c"
 #include "seam_natt.c"
 #include "seam_dnskey.c"
 
+#include "seam_rsasig.c"
+
 u_int8_t reply_buffer[MAX_OUTPUT_UDP_SIZE];
 
-#include "seam_gi_sha1.c"
-#include "seam_gi_sha1_group14.c"
+#include "seam_gi_sha256_group14.c"
 #include "seam_finish.c"
 
 #include "seam_ikev2_sendI1.c"
@@ -52,7 +45,7 @@ void recv_pcap_packet(u_char *user
 		      , const u_char *bytes)
 {
     struct state *st;
-    struct pcr_kenonce *kn = &crypto_req->pcr_d.kn;
+    //struct pcr_kenonce *kn = &crypto_req->pcr_d.kn;
 
     recv_pcap_packet_gen(user, h, bytes);
 
@@ -68,10 +61,8 @@ void recv_pcap_packet(u_char *user
 
 int main(int argc, char *argv[])
 {
-    int   len;
     char *infile;
     char *conn_name;
-    int  lineno=0;
     int  regression = 0;
     struct connection *c1;
     struct state *st;
@@ -134,7 +125,7 @@ int main(int argc, char *argv[])
 
     /* dump the delete message that comes out */
     send_packet_setup_pcap("/dev/null");
-    delete_connection(c1, TRUE);
+    delete_connection(c1, TRUE, FALSE);
 
     st = state_with_serialno(1);
     if(st!=NULL) {

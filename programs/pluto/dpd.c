@@ -34,7 +34,7 @@
 #include "oswtime.h"
 #include "defs.h"
 #include "id.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "x509.h"
 #include "pgp.h"
 #include "certs.h"
@@ -51,7 +51,7 @@
 #include "log.h"
 #include "cookie.h"
 #include "pluto/server.h"
-#include "spdb.h"
+#include "pluto/spdb.h"
 #include "timer.h"
 #include "rnd.h"
 #include "ipsec_doi.h"	/* needs demux.h and state.h */
@@ -432,7 +432,25 @@ dpd_inI_outR(struct state *p1st
     seqno = ntohl(*(u_int32_t *)pbs->cur);
     if (p1st->st_dpd_peerseqno && seqno <= p1st->st_dpd_peerseqno) {
         loglog(RC_LOG_SERIOUS, "DPD: received old or duplicate R_U_THERE");
-        return STF_IGNORE;
+		if (p1st->st_dpd_rdupcount >= DPD_RETRANS_MAX) {
+			loglog(RC_LOG_SERIOUS,
+		       "DPD: received %d or more duplicate R_U_THERE's - will no longer answer",
+				DPD_RETRANS_MAX);
+			return STF_IGNORE;
+		} else {
+			/*
+			 * Needed to work around openbsd bug (isakmpd/dpd.c
+			 * around line 350) where they forget to increase
+			 * isakmp_sa->dpd_seq on unanswered DPD probe violating
+			 * RFC 3706 Section 7 "Security Considerations"
+			 */
+			loglog(RC_LOG_SERIOUS,
+		       "DPD: received less than %d duplicate R_U_THERE's - will reluctantly answer",
+				DPD_RETRANS_MAX);
+			p1st->st_dpd_rdupcount++;
+		}
+	} else {
+		p1st->st_dpd_rdupcount = 0;
     }
 
     DBG(DBG_DPD,

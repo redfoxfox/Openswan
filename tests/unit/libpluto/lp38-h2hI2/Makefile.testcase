@@ -1,11 +1,14 @@
 # -*- makefile -*-
 WHACKFILE=${OUTPUTS}/ikev2client.record.${ARCH}
-UNITTEST1ARGS=${WHACKFILE} ${CONNNAME} h2hR1.pcap OUTPUT/h2hI2.pcap
+UNITTEST1ARGS=${WHACKFILE} ${CONNNAME} OUTPUT/h2hI2.pcap h2hR1.pcap
 TESTNAME=h2hI2
 ENDNAME=h2h
 CONNNAME=mytunnel
 
-pcapupdate:
+PCAPDEPENDENCIES = ../lp37-h2hR1/OUTPUT/h2hR1.pcap
+include ../Makefile.pcapupdate
+
+pcapupdate: ${PCAPDEPENDENCIES}
 	cp ../lp37-h2hR1/OUTPUT/h2hR1.pcap h2hR1.pcap
 
 

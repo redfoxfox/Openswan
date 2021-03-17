@@ -90,6 +90,7 @@ enum keyword_numeric_config_field {
     KBF_OPPOENCRYPT,
     KBF_DPDDELAY,
     KBF_DPDTIMEOUT,
+    KBF_FIRSTMSGID,
     KBF_METRIC,
     KBF_PHASE2,
     KBF_AUTHBY,
@@ -129,6 +130,7 @@ enum keyword_numeric_config_field {
     KBF_INITIAL_CONTACT,
     KBF_SEND_VENDORID,      /* per conn sending of our own libreswan vendorid */
     KBF_IKEV1_NATT,	    /* ikev1 NAT-T payloads to send/process */
+    KBF_IKEv1,              /* ikev1=yes/no */
 
     /* new ones here */
     KBF_ENDADDRFAMILY,
@@ -212,7 +214,9 @@ enum keyword_valid {
 /* values keyexchange= */
 enum keyword_keyexchange {
     KE_NONE = 0,
-    KE_IKE  = 1,
+    KE_IKE  = 1,  /* any version of IKE, vs group keying methods */
+    KE_IKEv1= 2,  /* RFC4307 and friendds */
+    KE_IKEv2= 3,  /* RFC7296 and future */
 };
 
 /* values for auto={add,start,route,ignore} */
@@ -313,7 +317,7 @@ struct config_parsed {
     bool                got_default;
 };
 
-const struct keyword_enum_values kw_connaddrfamily_list;
+extern const struct keyword_enum_values kw_connaddrfamily_list;
 
 extern struct keyword_def ipsec_conf_keywords_v2[];
 extern const int ipsec_conf_keywords_v2_count;

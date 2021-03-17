@@ -33,7 +33,7 @@
 #include "sysdep.h"
 #include "constants.h"
 #include "defs.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "id.h"
 #include "x509.h"
 #include "pgp.h"
@@ -52,7 +52,7 @@
 #include "log.h"
 #include "cookie.h"
 #include "pluto/server.h"
-#include "spdb.h"
+#include "pluto/spdb.h"
 #include "timer.h"
 #include "rnd.h"
 #include "ipsec_doi.h"	/* needs demux.h and state.h */
@@ -63,11 +63,11 @@
 
 #include "sha1.h"
 #include "md5.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
 
-#include "ike_alg.h"
+#include "pluto/ike_alg.h"
 #include "kernel_alg.h"
-#include "plutoalg.h"
+#include "pluto/plutoalg.h"
 #include "pluto_crypt.h"
 #include "ikev1.h"
 #include "ikev1_continuations.h"
@@ -129,7 +129,7 @@ aggr_inI1_outR1_continue2(struct pluto_crypto_req_cont *pcrc
   passert(cur_state == NULL);
   passert(st != NULL);
 
-  passert(st->st_suspended_md == dh->md);
+  assert_suspended(st, dh->md);
   set_suspended(st, NULL);	/* no longer connected or suspended */
 
   set_cur_state(st);
@@ -176,7 +176,7 @@ aggr_inI1_outR1_continue1(struct pluto_crypto_req_cont *pcrc
   passert(cur_state == NULL);
   passert(st != NULL);
 
-  passert(st->st_suspended_md == ke->md);
+  assert_suspended(st, ke->md);
   set_suspended(st, NULL);	/* no longer connected or suspended */
 
   set_cur_state(st);
@@ -275,6 +275,7 @@ aggr_inI1_outR1_common(struct msg_digest *md
 
     /* Set up state */
     cur_state = md->st = st = new_state();	/* (caller will reset cur_state) */
+    st->st_ikev2_orig_initiator = FALSE; /* we are responding to this exchange */
     st->st_connection = c;
     st->st_remoteaddr = md->sender;
     st->st_remoteport = md->sender_port;
@@ -506,7 +507,7 @@ aggr_inI1_outR1_tail(struct pluto_crypto_req_cont *pcrc
 
 	    if (sig_len == 0)
 	    {
-		loglog(RC_LOG_SERIOUS, "unable to locate my private key for RSA Signature");
+		loglog(RC_LOG_SERIOUS, "unable to locate my private key for RSA Signature (IKEv1 aggressive responder)");
 		return STF_FAIL + AUTHENTICATION_FAILED;
 	    }
 
@@ -579,6 +580,14 @@ aggr_inR1_outI2(struct msg_digest *md)
      */
     struct state *st = md->st;
     pb_stream *keyex_pbs = &md->chain[ISAKMP_NEXT_KE]->pbs;
+
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
 
     st->st_policy |= POLICY_AGGRESSIVE;
 
@@ -684,7 +693,7 @@ aggr_inR1_outI2_crypto_continue(struct pluto_crypto_req_cont *pcrc
   passert(cur_state == NULL);
   passert(st != NULL);
 
-  passert(st->st_suspended_md == dh->md);
+  assert_suspended(st, dh->md);
   set_suspended(st, NULL);	/* no longer connected or suspended */
 
   set_cur_state(st);
@@ -798,7 +807,7 @@ aggr_inR1_outI2_tail(struct msg_digest *md
 
 	    if (sig_len == 0)
 	    {
-		loglog(RC_LOG_SERIOUS, "unable to locate my private key for RSA Signature");
+		loglog(RC_LOG_SERIOUS, "unable to locate my private key for RSA Signature  (IKEv1 aggressive initiator)");
 		return STF_FAIL + AUTHENTICATION_FAILED;
 	    }
 
@@ -988,7 +997,7 @@ aggr_outI1_continue(struct pluto_crypto_req_cont *pcrc
   passert(cur_state == NULL);
   passert(st != NULL);
 
-  passert(st->st_suspended_md == ke->md);
+  assert_suspended(st, ke->md);
   set_suspended(st,NULL);	/* no longer connected or suspended */
 
   set_cur_state(st);
@@ -1024,6 +1033,7 @@ aggr_outI1(int whack_sock,
     cur_state = st = new_state();
     if(newstateno) *newstateno = st->st_serialno;
 
+    st->st_ikev2_orig_initiator = TRUE; /* we are initiating this exchange */
     st->st_connection = c;
 #ifdef HAVE_LABELED_IPSEC
     st->sec_ctx = NULL;
@@ -1086,6 +1096,15 @@ aggr_outI1(int whack_sock,
 	openswan_log("initiating Aggressive Mode #%lu to replace #%lu, connection \"%s\""
 		     , st->st_serialno, predecessor->st_serialno
 		     , st->st_connection->name);
+
+	/* If no st_remoteaddr/st_remoteport, use info from predecessor */
+	if (ip_address_isany(&st->st_remoteaddr)) {
+	    st->st_remoteaddr = predecessor->st_remoteaddr;
+	    st->st_remoteport = predecessor->st_remoteport;
+	    DBG(DBG_CONTROL,
+		DBG_log("no st_remoteaddr/st_remoteport, using %s:%u from predecessor state",
+			ip_str(&st->st_remoteaddr), st->st_remoteport));
+	}
     }
 
     {
@@ -1152,15 +1171,17 @@ aggr_outI1_tail(struct pluto_crypto_req_cont *pcrc
     /* SA out */
     {
 	u_char *sa_start = md->rbody.cur;
-	int    policy_index = POLICY_ISAKMP(st->st_policy
-					    , c->spd.this.xauth_server
-					    , c->spd.this.xauth_client);
+        struct db_sa *oakley_sa = ikev1_alg_makedb(st->st_policy
+                                                   , c->alg_info_ike
+                                                   , TRUE /* one proposal for aggr */
+                                                   , INITIATOR);
 
-	if (!out_sa(&md->rbody
-		    , &oakley_am_sadb[policy_index], st
-		    , TRUE, TRUE, ISAKMP_NEXT_KE))
-	{
-	    cur_state = NULL;
+        if(oakley_sa == NULL
+           || !out_sa(&md->rbody
+                      , oakley_sa, st
+                      , /* oakley mode */TRUE, INITIATOR, /*aggr */TRUE, ISAKMP_NEXT_KE)) {
+            reset_cur_state();
+            if(oakley_sa) free_sa(oakley_sa);
 	    return STF_INTERNAL_ERROR;
 	}
 
@@ -1168,6 +1189,7 @@ aggr_outI1_tail(struct pluto_crypto_req_cont *pcrc
 	passert(st->st_p1isa.ptr == NULL);	/* no leak! */
 	clonetochunk(st->st_p1isa, sa_start, md->rbody.cur - sa_start,
 		     "sa in aggr_outI1");
+        free_sa(oakley_sa);
     }
 
     /* KE out */

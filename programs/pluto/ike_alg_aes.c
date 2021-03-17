@@ -11,9 +11,9 @@
 #include "constants.h"
 #include "defs.h"
 #include "log.h"
-#include "klips-crypto/aes_cbc.h"
+#include "crypto/aes_cbc.h"
 #include "alg_info.h"
-#include "ike_alg.h"
+#include "pluto/ike_alg.h"
 
 #ifdef HAVE_LIBNSS
 #include <pk11pub.h>
@@ -100,6 +100,14 @@ DBG(DBG_CRYPT, DBG_log("NSS do_aes: exit"));
     char iv_bak[AES_CBC_BLOCK_SIZE];
     char *new_iv = NULL;	/* logic will avoid copy to NULL */
 
+    /*
+     * if key is NULL We have segfault in aes_set_key()
+     * We can go out from do_aes() and try to get aes key again
+     */
+    if (key == NULL) {
+	loglog(RC_LOG_SERIOUS, "do_aes: enc key is NULL.");
+	return;
+    }
     aes_set_key(&aes_ctx, key, key_size, 0);
 
     /*
@@ -122,13 +130,13 @@ DBG(DBG_CRYPT, DBG_log("NSS do_aes: exit"));
 
 }
 
-struct encrypt_desc algo_aes =
+struct ike_encr_desc algo_aes =
 {
 	common: {
 	  name: "aes",
 	  officname: "aes",
-	  algo_type: 	IKE_ALG_ENCRYPT,
-	  algo_id:   	OAKLEY_AES_CBC,
+	  algo_type:    IKEv2_TRANS_TYPE_ENCR,
+	  ikev1_algo_id:   	OAKLEY_AES_CBC,
 	  algo_v2id:    IKEv2_ENCR_AES_CBC,
 	  algo_next: 	NULL, },
 	enc_ctxsize: 	sizeof(aes_context),

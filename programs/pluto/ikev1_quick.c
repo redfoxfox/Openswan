@@ -36,7 +36,7 @@
 #include "sysdep.h"
 #include "constants.h"
 #include "defs.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "id.h"
 #include "x509.h"
 #include "pgp.h"
@@ -55,7 +55,7 @@
 #include "cookie.h"
 #include "pluto/server.h"
 #include "pluto/libpluto.h"
-#include "spdb.h"
+#include "pluto/spdb.h"
 #include "timer.h"
 #include "rnd.h"
 #include "ipsec_doi.h"	/* needs demux.h and state.h */
@@ -64,13 +64,14 @@
 #include "pkcs.h"
 #include "asn1.h"
 
+#include "db2_ops.h"
 #include "sha1.h"
 #include "md5.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
 
-#include "ike_alg.h"
+#include "pluto/ike_alg.h"
 #include "kernel_alg.h"
-#include "plutoalg.h"
+#include "pluto/plutoalg.h"
 
 #include "pluto_crypt.h"
 #include "ikev1.h"
@@ -214,64 +215,17 @@ compute_proto_keymat(struct state *st
     switch (protoid)
     {
     case PROTO_IPSEC_ESP:
-	    switch (pi->attrs.transattrs.encrypt)
-	    {
-	    case ESP_NULL:
-		needed_len = 0;
-		break;
-	    case ESP_DES:
-		needed_len = DES_CBC_BLOCK_SIZE;
-		break;
-	    case ESP_3DES:
-		needed_len = DES_CBC_BLOCK_SIZE * 3;
-		break;
-	    case ESP_AES:
-		needed_len = AES_CBC_BLOCK_SIZE;
-		/* if an attribute is set, then use that! */
-		if(st->st_esp.attrs.transattrs.enckeylen) {
-		    needed_len = st->st_esp.attrs.transattrs.enckeylen/8;
-		}
-		break;
-
-	    default:
-#ifdef KERNEL_ALG
 		if((needed_len=kernel_alg_esp_enc_keylen(pi->attrs.transattrs.encrypt))>0) {
-			/* XXX: check key_len "coupling with kernel.c's */
 			if (pi->attrs.transattrs.enckeylen) {
 				needed_len=pi->attrs.transattrs.enckeylen/8;
-				DBG(DBG_PARSING, DBG_log("compute_proto_keymat:"
-						"key_len=%d from peer",
-						(int)needed_len));
 			}
-			break;
 		}
-#endif
-		bad_case(pi->attrs.transattrs.encrypt);
-	    }
 	    DBG(DBG_PARSING, DBG_log("compute_proto_keymat:"
 				     "needed_len (after ESP enc)=%d",
 				     (int)needed_len));
 
-	    switch (pi->attrs.transattrs.integ_hash)
-	    {
-	    case AUTH_ALGORITHM_NONE:
-		break;
-	    case AUTH_ALGORITHM_HMAC_MD5:
-		needed_len += HMAC_MD5_KEY_LEN;
-		break;
-	    case AUTH_ALGORITHM_HMAC_SHA1:
-		needed_len += HMAC_SHA1_KEY_LEN;
-		break;
-	    default:
-#ifdef KERNEL_ALG
-	      if (kernel_alg_esp_auth_ok(pi->attrs.transattrs.integ_hash, NULL) == NULL) {
+        if (ESP_AALG_PRESENT(pi->attrs.transattrs.integ_hash)) {
 		  needed_len += kernel_alg_esp_auth_keylen(pi->attrs.transattrs.integ_hash);
-		  break;
-	      }
-#endif
-	    case AUTH_ALGORITHM_DES_MAC:
-		bad_case(pi->attrs.transattrs.integ_hash);
-		break;
 
 	    }
 	    DBG(DBG_PARSING, DBG_log("compute_proto_keymat:"
@@ -280,22 +234,8 @@ compute_proto_keymat(struct state *st
 	    break;
 
     case PROTO_IPSEC_AH:
-	    switch (pi->attrs.transattrs.encrypt)
-	    {
-	    case AH_MD5:
-		needed_len = HMAC_MD5_KEY_LEN;
-		break;
-	    case AH_SHA:
-		needed_len = HMAC_SHA1_KEY_LEN;
-		break;
-	    default:
-#ifdef KERNEL_ALG
-		if (kernel_alg_ah_auth_ok(pi->attrs.transattrs.integ_hash, NULL)) {
+        if (ESP_AALG_PRESENT(pi->attrs.transattrs.integ_hash)) {
 		    needed_len += kernel_alg_ah_auth_keylen(pi->attrs.transattrs.integ_hash);
-		    break;
-		}
-#endif
-		bad_case(pi->attrs.transattrs.encrypt);
 	    }
 	    break;
 
@@ -602,7 +542,12 @@ check_net_id(struct isakmp_ipsec_id *id
     } else if(!end->has_client && !subnetisaddr(&net_temp, endip)) {
         loglog(RC_LOG_SERIOUS, "%s subnet returned does not match my self-proposal - us:%s vs them:%s",
                which,subxmt,subrec);
-        bad_proposal = TRUE;
+#ifdef ALLOW_MICROSOFT_BAD_PROPOSAL
+	loglog(RC_LOG_SERIOUS, "Allowing questionable self-proposal anyway [ALLOW_MICROSOFT_BAD_PROPOSAL]");
+	bad_proposal = FALSE;
+#else
+	bad_proposal = TRUE;
+#endif
     }
 
     if(*protoid != id->isaiid_protoid) {
@@ -639,7 +584,7 @@ check_net_id(struct isakmp_ipsec_id *id
  * Used by: quick_outI1, quick_inI1_outR1 (twice), quick_inR1_outI2
  * (see RFC 2409 "IKE" 5.5, pg. 18 or draft-ietf-ipsec-ike-01.txt 6.2 pg 25)
  */
-static size_t
+size_t
 quick_mode_hash12(u_char *dest, const u_char *start, const u_char *roof
 , const struct state *st, const msgid_t *msgid, bool hash2)
 {
@@ -693,7 +638,7 @@ quick_mode_hash3(u_char *dest, struct state *st)
 void
 init_phase2_iv(struct state *st, const msgid_t *msgid)
 {
-    const struct hash_desc *h = st->st_oakley.prf_hasher;
+    const struct ike_prf_desc *h = st->st_oakley.prf_hasher;
     union hash_ctx ctx;
 
     DBG_cond_dump(DBG_CRYPT, "last Phase 1 IV:"
@@ -746,9 +691,10 @@ quick_outI1_continue(struct pluto_crypto_req_cont *pcrc
     passert(ugh == NULL);
     passert(cur_state == NULL);
     passert(st != NULL);
+    passert(qke->md == NULL);	// there is no md, because we are initiating
 
     set_cur_state(st);	/* we must reset before exit */
-    set_suspended(st, NULL);
+
     e = quick_outI1_tail(pcrc, r, st);
     if (e == STF_INTERNAL_ERROR)
 	loglog(RC_LOG_SERIOUS, "%s: quick_outI1_tail() failed with STF_INTERNAL_ERROR", __FUNCTION__);
@@ -894,6 +840,7 @@ quick_outI1_tail(struct pluto_crypto_req_cont *pcrc
        st->hidden_variables.st_nat_traversal = 0;
     }
 #endif
+    st->st_sadb = alginfo2child_db2(st->st_connection->alg_info_esp);
 
     /* set up reply */
     init_pbs(&reply_stream, reply_buffer, sizeof(reply_buffer), "reply packet");
@@ -931,8 +878,8 @@ quick_outI1_tail(struct pluto_crypto_req_cont *pcrc
 	    pm |= POLICY_COMPRESS;
 
 	if (!out_sa(&rbody
-		    , &ipsec_sadb[(st->st_policy & pm) >> POLICY_IPSEC_SHIFT]
-		    , st, FALSE, FALSE, ISAKMP_NEXT_NONCE))
+                    , st->st_sadb
+		    , st, /*oakley_mode*/FALSE, INITIATOR, /* aggr */FALSE, ISAKMP_NEXT_NONCE))
 	{
 	    reset_cur_state();
 	    return STF_INTERNAL_ERROR;
@@ -1282,12 +1229,6 @@ quick_inI1_outR1(struct msg_digest *md)
     b.new_iv_len = p1st->st_new_iv_len;
     save_new_iv(p1st, b.new_iv);
 
-    /*
-     * FIXME - DAVIDM
-     * "b" is on the stack,  for OPPO  tunnels this will be bad, in
-     * quick_inI1_outR1_start_query it saves a pointer to it before
-     * a crypto (async op).
-     */
     return quick_inI1_outR1_authtail(&b, NULL);
 }
 
@@ -1379,9 +1320,17 @@ quick_inI1_outR1_start_query(struct verify_oppo_bundle *b
     ip_address client;
     err_t ugh;
 
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(p1st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
+
     /* Record that state is used by a suspended md */
     b->step = next_step;    /* not just vc->b.step */
-    vc->b = *b;
+    vc->b = *b;             /* copies entire structure */
     passert(p1st->st_suspended_md == NULL);
     set_suspended(p1st, b->md);
 
@@ -1690,18 +1639,42 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
     struct end our, peer;
     struct hidden_variables hv;
 
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(p1st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
+
     zero(&our); zero(&peer);
     our.host_type  = KH_IPADDR;
     our.client     = b->my.net;
     our.port       = b->my.port;
     our.protocol   = b->my.proto;
     our.has_client = TRUE;
+    our.host_addr  = p1st->st_localaddr;
 
     peer.host_type  = KH_IPADDR;
     peer.client     = b->his.net;
     peer.port       = b->his.port;
     peer.protocol   = b->his.proto;
     peer.has_client = TRUE;
+    peer.host_addr  = p1st->st_remoteaddr;
+
+    /*
+     * check that if we are not behind a NAT, that a /32 is proposed, and that the thing proposed
+     * is the same as the address from which the connection came from
+     */
+    if(p1st->hidden_variables.st_nat_traversal == 0
+       && subnetishost(&peer.client)
+       && addrinsubnet(&p1st->st_remoteaddr, &peer.client)) {
+        /* it's a proposal for hosts own IP address, not behind a NAT */
+        peer.client_is_self = TRUE;
+
+    } else if(is_virtual_net_allowed(c, &peer.client, &p1st->st_remoteaddr)) {
+        peer.client_is_self = TRUE;
+    }
 
     {
 	char s1[ENDCLIENTTOT_BUF],d1[ENDCLIENTTOT_BUF];
@@ -1709,8 +1682,8 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
 	endclienttot(&our, s1, sizeof(s1));
 	endclienttot(&peer,d1, sizeof(d1));
 
-	openswan_log("the peer proposed: %s -> %s"
-		     , s1, d1);
+	openswan_log("the peer proposed: %s -> %s (self=%s)"
+		     , s1, d1, peer.client_is_self ? "true" : "false");
     }
 
     /* Now that we have identities of client subnets, we must look for
@@ -1722,7 +1695,7 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
 #ifdef NAT_TRAVERSAL
 #ifdef I_KNOW_TRANSPORT_MODE_HAS_SECURITY_CONCERN_BUT_I_WANT_IT
     if( (p1st->hidden_variables.st_nat_traversal & NAT_T_DETECTED)
-	&& !(p1st->st_policy & POLICY_TUNNEL)
+	&& !(p1st->st_connection->policy & POLICY_TUNNEL)
 	&&  (p1st->hidden_variables.st_nat_traversal & (LELEM(NAT_TRAVERSAL_NAT_BHND_ME) | LELEM(NAT_TRAVERSAL_NAT_BHND_PEER)) )
 	&& (p == NULL) )
         {
@@ -1854,37 +1827,33 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
 #endif
 	    c = p;
 	}
+    }
 
-	/* XXX Though c == p, they are used intermixed in the below section */
-	/* fill in the client's true ip address/subnet */
-	DBG(DBG_CONTROLMORE
-	    , DBG_log("client wildcard: %s  port wildcard: %s  virtual: %s"
+    /* fill in the client's true ip address/subnet */
+    DBG(DBG_CONTROLMORE
+	, DBG_log("client wildcard: %s  port wildcard: %s  virtual: %s"
 		      , c->spd.that.has_client_wildcard ? "yes" : "no"
 		      , c->spd.that.has_port_wildcard  ? "yes" : "no"
 		      , is_virtual_connection(c) ? "yes" : "no"));
 
-	if (c->spd.that.has_client_wildcard)
-	{
+    if (c->spd.that.has_client_wildcard) {
 	    c->spd.that.client = *his_net;
 	    c->spd.that.has_client_wildcard = FALSE;
-	}
+    }
 
         /* fill in the client's true port */
-        if (p->spd.that.has_port_wildcard)
-        {
+    if (c->spd.that.has_port_wildcard) {
             int port = htons(b->his.port);
 
-            setportof(port, &p->spd.that.host_addr);
-            setportof(port, &p->spd.that.client.addr);
+        setportof(port, &c->spd.that.host_addr);
+        setportof(port, &c->spd.that.client.addr);
 
-            p->spd.that.port = b->his.port;
-            p->spd.that.has_port_wildcard = FALSE;
-        }
+        c->spd.that.port = b->his.port;
+        c->spd.that.has_port_wildcard = FALSE;
+    }
 
 
-
-	if (is_virtual_connection(c))
-	{
+    if (is_virtual_connection(c)) {
 	    char cthat[END_BUF];
 
 	    c->spd.that.client = *his_net;
@@ -1901,7 +1870,6 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
 	    DBG(DBG_CONTROLMORE
 		, DBG_log("setting phase 2 virtual values to %s"
 			  , cthat));
-	}
     }
     passert((p1st->st_policy & POLICY_PFS)==0 || p1st->st_pfs_group != NULL );
 
@@ -2019,6 +1987,7 @@ quick_inI1_outR1_authtail(struct verify_oppo_bundle *b
 	    if(ci < st->st_import) ci = st->st_import;
 
 	    qke->md = md;
+	    set_suspended(st, md);
 	    pcrc_init(&qke->qke_pcrc);
 	    qke->qke_pcrc.pcrc_func = quick_inI1_outR1_cryptocontinue1;
 
@@ -2363,6 +2332,14 @@ quick_inR1_outI2(struct msg_digest *md)
 {
     struct state *const st = md->st;
 
+    /* if we are already processing a packet on this st, we will be unable
+     * to start another crypto operation below */
+    if (is_suspended(st)) {
+        openswan_log("%s: already processing a suspended cyrpto operation "
+                     "on this SA, duplicate will be dropped.", __func__);
+	return STF_TOOMUCHCRYPTO;
+    }
+
     /* HASH(2) in */
     CHECK_QUICK_HASH(md
 	, quick_mode_hash12(hash_val, hash_pbs->roof, md->message_pbs.roof
@@ -2599,6 +2576,9 @@ quick_inR1_outI2_cryptotail(struct dh_continuation *dh
 
    /* Derive new keying material */
     compute_keymats(st);
+
+    if (md->pst == NULL)
+	return STF_INTERNAL_ERROR;
 
     /* Tell the kernel to establish the inbound, outbound, and routing part
      * of the new SA (unless the commit bit is set -- which we don't support).

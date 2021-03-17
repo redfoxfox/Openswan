@@ -1,9 +1,11 @@
 #include "../lp13-parentI3/parentI3_head.c"
-#include "seam_gi_sha1.c"
-#include "seam_gi_sha1_group14.c"
+#include "seam_x509.c"
+#include "seam_gi_sha256_group14.c"
 #include "seam_finish.c"
 #include "seam_ikev2_sendI1.c"
 #include "seam_debug.c"
+#include "seam_rsasig.c"
+#include "seam_kernel.c"
 
 #define TESTNAME "deleteChildSA-msgInI3"
 
@@ -13,7 +15,6 @@ void recv_pcap_packet(u_char *user
 		      , const u_char *bytes)
 {
     static int call_counter = 0;
-    struct pcr_kenonce *kn = &crypto_req->pcr_d.kn;
 
     call_counter++;
     DBG_log("%s() call %d: enter", __func__, call_counter);
@@ -60,6 +61,14 @@ void recv_pcap_packet2(u_char *user
     run_continuation(crypto_req);
 
     DBG_log("%s() call %d: exit", __func__, call_counter);
+}
+
+static void init_fake_secrets(void)
+{
+    osw_load_preshared_secrets(&pluto_secrets
+			       , TRUE
+			       , "../samples/parker.secrets"
+			       , NULL, NULL);
 }
 
 static void init_loaded(void)

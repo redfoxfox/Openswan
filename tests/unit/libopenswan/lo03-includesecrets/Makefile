@@ -33,7 +33,7 @@ UNITTESTARGS=
 check:
 	@mkdir -p OUTPUT
 	@echo CC ${TESTNAME}.c
-	@${CC} -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
+	@${CC} -Wno-pointer-sign -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
 	@echo "file ${TESTNAME}"          >.gdbinit
 	@echo "set args "${UNITTESTARGS} >>.gdbinit
 	${COREULIMIT} && ./${TESTNAME} ${UNITTESTARGS} >OUTPUT/${TESTNAME}.txt 2>&1
@@ -43,4 +43,6 @@ check:
 update:
 	cp OUTPUT/${TESTNAME}.cooked output.txt
 
+clean:
+	@rm -f ${TESTNAME}
 

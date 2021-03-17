@@ -187,6 +187,8 @@ BISONOSFLAGS=
 # XXX THESE are now pretty much STOCK, and should get rolled back into CFLAGS and LDFLAGS.
 # USER* should be empty for end users/vendors to use
 
+OPTIMIZE?=-g -O3
+GCCOPTIONS=${OPTIMIZE} -fPIE -fstack-protector --param=ssp-buffer-size=4 -Wformat -Wformat-security -Werror=format-security -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 ${WERROR} $(GCC_LINT) ${USERCOMPILEEXTRA}
 # extra compile flags, for userland and kernel stuff, e.g. -g for debug info
 # you can add to this in the defaults file using +=
 # -DGCC_LINT uses gcc-specific declarations to improve compile-time diagnostics.
@@ -194,7 +196,7 @@ BISONOSFLAGS=
 #Example for a cross compile:
 #USERCOMPILE?=-g ${PORTDEFINE} -I/usr/local/arm_tools/arm-elf/inc -L/usr/local/arm_tools/lib/gcc-lib
 GCC_LINT ?= -DGCC_LINT
-USERCOMPILE?=-g -O3 -fPIE -fstack-protector --param=ssp-buffer-size=4 -Wformat -Wformat-security -Werror=format-security -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 ${WERROR} $(GCC_LINT) ${USERCOMPILEEXTRA}
+USERCOMPILE?=${GCCOPTIONS}
 # on fedora/rhel
 #USERCOMPILE?=-g -O2 -g -pipe -Wall -Wp,-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fexceptions -fstack-protector --param=ssp-buffer-size=4  -m64 -mtune=generic -fPIE -pie -DSUPPORT_BROKEN_ANDROID_ICS
 KLIPSCOMPILE=-O2 -fPIE -fstack-protector --param=ssp-buffer-size=4 -Wformat -Wformat-security -Werror=format-security -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -DCONFIG_KLIPS_ALG -DDISABLE_UDP_CHECKSUM
@@ -392,6 +394,8 @@ USE_LDAP?=false
 
 # Include libcurl support (currently used for fetching CRLs)
 USE_LIBCURL?=false
+# Should we include IKEv1 code?
+USE_IKEv1?=true
 
 # should we include all manner of known to be broken/weak?
 # use this only if you are building some kind of a testing
@@ -442,6 +446,7 @@ USE_TAPROOM?=false
 # Whether to use LEAK_DETECTIVE to find memory leaks.
 # disabled for now as it causes some pfree()s due to bad code
 USE_LEAK_DETECTIVE?=false
+USE_ONGOING_LEAK_DETECTIVE?=false
 
 # Use dmalloc. Requires USE_LEAK_DETECTIVE
 USE_DMALLOC?=false
@@ -454,6 +459,9 @@ HAVE_BROKEN_POPEN?=false
 
 # For systems with no fork (uclibc nommu)
 HAVE_NO_FORK?=false
+
+# Set to skip man pages on embedded systems
+USE_NOMANINSTALL?=false
 
 NONINTCONFIG=oldconfig
 
@@ -493,6 +501,8 @@ BUILDENV=$(shell uname -s | tr 'A-Z' 'a-z' | sed -e 's/\(.*\)-.*/\1/')
 endif
 export BUILDENV
 export OSDEP
+export USE_LIBNSS
+
 include ${OPENSWANSRCDIR}/packaging/defaults/${BUILDENV}
 -include ${OPENSWANSRCDIR}/packaging/defaults/${BUILDENV}.${ARCH}
 
@@ -505,7 +515,11 @@ INSTSUIDFLAGS=--mode=u+rxs,g+rx,o+rx --group=root -b -B .old
 endif
 
 ifeq ($(USE_OBJDIR),true)
+ifeq ($(USE_LIBNSS),true)
+OBJDIR?=OBJ.libnss.${BUILDENV}.${ARCH}
+else
 OBJDIR?=OBJ.${BUILDENV}.${ARCH}
+endif
 OBJDIRTOP?=${OPENSWANSRCDIR}/${OBJDIR}
 else
 # where to place the object files which are built
@@ -538,7 +552,7 @@ LIBOPENSWANDIR=${OPENSWANSRCDIR}/lib/libopenswan
 LIBOPENSWAN=${OBJDIRTOP}/lib/libopenswan/libopenswan.a
 OPENSWANLIB=${LIBOPENSWAN}
 LIBPLUTO=${OBJDIRTOP}/lib/libpluto/libpluto.a
-PLUTOLIB=${LIBPLUTO}
+LIBALGOPARSE=${OBJDIRTOP}/lib/libalgoparse/libalgoparse.a
 LIBOSWLOG=${OBJDIRTOP}/lib/liboswlog/liboswlog.a
 LIBOSWKEYS=${OBJDIRTOP}/lib/liboswkeys/liboswkeys.a
 
@@ -555,14 +569,15 @@ LIBDESLITE:=${OBJDIRTOP}/lib/libcrypto/libdes/libdes.a
 LIBOSWCRYPTO=${OBJDIRTOP}/lib/libcrypto/liboswcrypto/liboswcrypto.a
 LIBAES=${OBJDIRTOP}/lib/libcrypto/libaes/libaes.a
 LIBMD5=${OBJDIRTOP}/lib/libcrypto/libmd5/libmd5.a
-LIBMD2=${OBJDIRTOP}/lib/libcrypto/libmd2/libmd2.a
 LIBSHA1=${OBJDIRTOP}/lib/libcrypto/libsha1/libsha1.a
 LIBBLOWFISH=${OBJDIRTOP}/lib/libcrypto/libblowfish/libblowfish.a
 LIBTWOFISH=${OBJDIRTOP}/lib/libcrypto/libtwofish/libtwofish.a
 LIBSERPENT=${OBJDIRTOP}/lib/libcrypto/libserpent/libserpent.a
 LIBSHA2=${OBJDIRTOP}/lib/libcrypto/libsha2/libsha2.a
 CRYPTOLIBS= ${LIBOSWCRYPTO}
-CRYPTOLIBS+=${LIBAES} ${LIBSHA1} ${LIBMD5} ${LIBMD2} ${LIBDESLITE} ${LIBSHA2}
+CRYPTOLIBS+=${LIBAES} ${LIBSHA1} ${LIBMD5} ${LIBDESLITE} ${LIBSHA2}
+
+IKE_CRYPTO_DEFINES=-DUSE_AES -DUSE_3DES -DUSE_SHA2 -DUSE_SHA1 -DUSE_MD5
 
 ifeq ($(USE_EXTRACRYPTO),true)
 CRYPTOLIBS+= ${LIBSERPENT} ${LIBTWOFISH} ${LIBBLOWFISH}

@@ -30,8 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#if defined(IP_RECVERR) && defined(MSG_ERRQUEUE)
-#  include <asm/types.h>	/* for __u8, __u32 */
+#if defined(IP_RECVERR) && defined(MSG_ERRQUEUE) && defined(HAVE_ERRQUEUE)
 #  include <linux/errqueue.h>
 #  include <sys/uio.h>	/* struct iovec */
 #endif
@@ -52,12 +51,12 @@
 #include <security/pam_appl.h>
 #endif
 #include "pluto/connections.h"	/* needs id.h */
-#include "state.h"
+#include "pluto/state.h"
 #include "packet.h"
 #include "md5.h"
 #include "sha1.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
-#include "ike_alg.h"
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/ike_alg.h"
 #include "log.h"
 #include "demux.h"	/* needs packet.h */
 #include "ikev1.h"
@@ -178,9 +177,13 @@ process_packet(struct msg_digest **mdp)
 	bad_case(md->maj);
     }
 
-    if(cur_state!=NULL && cur_state->st_state == STATE_DELETING) {
+#if 0
+    st = md->st;
+    if(st!=NULL && st->st_state == STATE_DELETING) {
         free_state(st);
+        st = md->st = NULL;
     }
+#endif
 }
 
 /* wrapper for read_packet and process_packet
@@ -201,7 +204,7 @@ comm_handle(const struct iface_port *ifp)
 {
     static struct msg_digest *md;
 
-#if defined(IP_RECVERR) && defined(MSG_ERRQUEUE)
+#if defined(IP_RECVERR) && defined(MSG_ERRQUEUE) && defined(HAVE_ERRQUEUE)
     /* Even though select(2) says that there is a message,
      * it might only be a MSG_ERRQUEUE message.  At least
      * sometimes that leads to a hanging recvfrom.  To avoid

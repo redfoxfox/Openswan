@@ -27,19 +27,22 @@ check: OUTPUT
 	../readwritetest ${READWRITE} cassidy   cassidy.conf cassidy.conf
 	../readwritetest ${READWRITE} dooku h2h.conf ../../unit/libpluto/samples/h2h.conf
 	../readwritetest ${READWRITE} dooku certpercent.conf berri-strongswan.conf
+	../readwritetest ${READWRITE} dooku n2n-transport.conf n2n-transport.conf
 	: ../readwritetest ${READWRITE} dooku brokenspace.conf brokenspace.conf
+	../readwritetest ${READWRITE} ipv6-inconsistent ipv6-inconsistent.conf ipv6-inconsistent.conf
 	[ ! -f core ]
 
 OUTPUT:
 	mkdir -p OUTPUT
 
 update:
-	cp ../OUTPUTS/default.ipsec.conf.raw default.ipsec.conf.out
-	cp ../OUTPUTS/moon-base.conf.raw     moon-base.conf.out
-	cp ../OUTPUTS/dooku.conf.raw         dooku.conf.out
-	cp ../OUTPUTS/cassidy.conf.raw       cassidy.conf.out
-	cp ../OUTPUTS/h2h.conf.raw           h2h.conf.out
-	cp ../OUTPUTS/certpercent.conf.raw           certpercent.conf.out
+	cp OUTPUT/default.ipsec.conf.out default.ipsec.conf.out
+	cp OUTPUT/moon-base.conf.out     moon-base.conf.out
+	cp OUTPUT/dooku.conf.out         dooku.conf.out
+	cp OUTPUT/cassidy.conf.out       cassidy.conf.out
+	cp OUTPUT/h2h.conf.out           h2h.conf.out
+	cp OUTPUT/certpercent.conf.out   certpercent.conf.out
+	cp OUTPUT/n2n-transport.conf.out n2n-transport.conf.out
 
 # Local Variables:
 # compile-command: "(cd ../../../programs/readwriteconf && make clean && make programs) && make check"

@@ -22,13 +22,13 @@ include ${OPENSWANSRCDIR}/Makefile.ver
 
 MANDIR=$(MANTREE)/man3
 
-SRCS=addrtoa.c addrtot.c addrtypeof.c alg_info.c anyaddr.c atoaddr.c \
+SRCS=addrtoa.c addrtot.c addrtypeof.c anyaddr.c atoaddr.c \
 	atoasr.c atosubnet.c atoul.c constants.c copyright.c datatot.c \
 	alloc.c biglset.c diag.c familytot.c \
 	goodmask.c id.c initaddr.c initsaid.c initsubnet.c \
 	iprange.c \
         keyblobtoid.c \
-	kernel_alg.c lex.c mpzfuncs.c \
+	lex.c mpzfuncs.c \
 	optionsfrom.c oswconf.c oswtime.c oswid.c \
 	prng.c \
 	portof.c rangetoa.c rangetosubnet.c sameaddr.c \
@@ -63,7 +63,7 @@ OBJS=${SRCS:.c=.o} ${PFKEYV2_SRCS:.c=.o} ${UDPFROMTO_SRCS:.c=.o} version.o
 
 MANSRCDIR=${OPENSWANSRCDIR}/lib/libopenswan
 
-HDRS=${KLIPSINC}/openswan.h internal.h
+HDRS=internal.h
 
 LIBA=libopenswan.a
 
@@ -172,8 +172,12 @@ $(LIBA): $(OBJS)
 $(OBJS):	$(HDRS)
 
 %.o: %.c
+ifeq ($(V),1)
+	$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
+else
 	@echo CC $(notdir $<)
 	@$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
+endif
 
 # build version.c using version number from Makefile.ver
 version.c:	version.in.c ${OPENSWANSRCDIR}/Makefile.ver
@@ -247,6 +251,6 @@ checkprograms:
 # this should be a generic process.
 # Gather dependencies caused by explicit #includes within .c files
 depend:
-	(ls $(wildcard $(SRCS)) $(wildcard $(addprefix ${KLIPSSRCDIR}/,$(SRCS)))) | grep '\.c' | xargs $(GCC) -MM ${CFLAGS} ${PORTINCLUDE} ${ALLFLAGS} ) | sed -e 's,${OPENSWANSRCDIR},../..,g' >Makefile.depend
+	(ls $(wildcard $(SRCS)) $(wildcard $(addprefix ${KLIPSSRCDIR}/,$(SRCS)))) | grep '\.c' | xargs $(CC) -MM ${CFLAGS} ${PORTINCLUDE} ${ALLFLAGS} | sed -e 's,${OPENSWANSRCDIR},../..,g' >Makefile.depend
 
 -include ${srcdir}Makefile.depend

@@ -4,6 +4,7 @@
 #include "openswan/passert.h"
 #include "constants.h"
 #include "oswalloc.h"
+#include "oswcrypto.h"
 #include "oswlog.h"
 #include "secrets.h"
 #include "id.h"
@@ -104,7 +105,7 @@ void verify_signature(const char *keyname, unsigned int keysize_bits)
     }
     fclose(infile);
 
-    hexdump(signature_buf, 0, keysize);
+    hexdump(stdout, signature_buf, 0, keysize);
     printf("\n");
 
     signed_len = 16+der_digestinfo_len;
@@ -132,11 +133,12 @@ void verify_signature(const char *keyname, unsigned int keysize_bits)
     }
 }
 
+extern void load_oswcrypto(void);
+
 int main(int argc, char *argv[])
 {
     int i;
     struct id one;
-
     load_oswcrypto();
 
     progname = argv[0];

@@ -1,9 +1,7 @@
 int main(int argc, char *argv[])
 {
-    int   len;
     char *infile;
     char *conn_name;
-    int  lineno=0;
     int  regression = 0;
     struct connection *c1;
     struct state *st;
@@ -27,18 +25,27 @@ int main(int argc, char *argv[])
         argc--; argv++;
     }
 
+    oco = osw_init_options();
     tool_init_log();
     init_crypto();
     load_oswcrypto();
     init_fake_vendorid();
-    init_fake_secrets();
     init_local_interface();
+    init_fake_secrets();
     enable_debugging();
+    init_demux();
+    init_seam_kernelalgs();
+
+    init_nat_traversal(TRUE, /* keep alive interval */0
+                       , /* force keep alive */FALSE, /* port forwarding enabled */TRUE);
 
     infile = argv[0];
     conn_name = argv[1];
 
     cur_debugging = DBG_CONTROL|DBG_CONTROLMORE;
+#ifdef MORE_DEBUGGING
+    cur_debugging |= MORE_DEBUGGING;
+#endif
     if(readwhackmsg(infile) == 0) {
         fprintf(stderr, "failed to read whack file: %s\n", infile);
         exit(11);
@@ -49,7 +56,7 @@ int main(int argc, char *argv[])
     c1 = con_by_name(conn_name, TRUE);
     assert(c1 != NULL);
 #ifdef INIT_LOADED
-    INIT_LOADED(c1);
+    c1 = INIT_LOADED(c1);
 #endif
 
     //list_public_keys(FALSE, FALSE);
@@ -65,11 +72,10 @@ int main(int argc, char *argv[])
     st = state_with_serialno(1);
     if(st!=NULL) {
         delete_state(st);
-        free_state(st);
     }
 #endif
 
-    delete_connection(c1, TRUE);
+    delete_connection(c1, TRUE, FALSE);
 
     report_leaks();
 

@@ -1,7 +1,10 @@
 #include "../lp13-parentI3/parentI3_head.c"
+#include "seam_x509.c"
 #include "seam_gi_md5.c"
+#include "seam_rsasig.c"
 #include "seam_finish.c"
 #include "seam_ikev2_sendI1.c"
+#include "seam_kernel.c"
 
 #define TESTNAME "h2hI3"
 
@@ -11,7 +14,6 @@ void recv_pcap_packet(u_char *user
 		      , const u_char *bytes)
 {
     struct state *st;
-    struct pcr_kenonce *kn = &crypto_req->pcr_d.kn;
 
     enable_debugging();
     enable_debugging_on_sa(1);
@@ -33,7 +35,6 @@ void recv_pcap_packet2(u_char *user
                       , const u_char *bytes)
 {
     struct state *st;
-    struct pcr_kenonce *kn = &crypto_req->pcr_d.kn;
 
     enable_debugging();
     enable_debugging_on_sa(1);
@@ -47,6 +48,14 @@ void recv_pcap_packet2(u_char *user
 
     run_continuation(crypto_req);
 
+}
+
+static void init_fake_secrets(void)
+{
+    osw_load_preshared_secrets(&pluto_secrets
+			       , TRUE
+			       , "../samples/parker.secrets"
+			       , NULL, NULL);
 }
 
 static void init_loaded(void)

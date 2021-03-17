@@ -43,7 +43,6 @@
 #include "constants.h"
 #include "defs.h"
 #include "id.h"
-#include "state.h"
 #include "x509.h"
 #include "pgp.h"
 #include "certs.h"
@@ -51,6 +50,9 @@
 #include <security/pam_appl.h>
 #endif
 #include "pluto/connections.h"	/* needs id.h */
+#include "pluto/ike_alg.h"
+#include "pluto/plutoalg.h"
+#include "pluto/state.h"
 #include "packet.h"
 #include "keys.h"
 #include "demux.h"	/* needs packet.h */
@@ -60,7 +62,7 @@
 #include "log.h"
 #include "cookie.h"
 #include "pluto/server.h"
-#include "spdb.h"
+#include "pluto/spdb.h"
 #include "timer.h"
 #include "rnd.h"
 #include "ipsec_doi.h"	/* needs demux.h and state.h */
@@ -71,11 +73,9 @@
 
 #include "sha1.h"
 #include "md5.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
 
-#include "ike_alg.h"
 #include "kernel_alg.h"
-#include "plutoalg.h"
 #include "pluto_crypt.h"
 #include "ikev1.h"
 #include "ikev1_continuations.h"
@@ -93,61 +93,6 @@
 #include "x509more.h"
 
 #include "tpm/tpm.h"
-
-/* Pluto's Vendor ID
- *
- * Note: it is a NUL-terminated ASCII string, but NUL won't go on the wire.
- */
-#define PLUTO_VENDORID_SIZE 12
-static bool pluto_vendorid_built = FALSE;
-char pluto_vendorid[PLUTO_VENDORID_SIZE + 1];
-
-const char *
-init_pluto_vendorid(void)
-{
-    MD5_CTX hc;
-    unsigned char hash[MD5_DIGEST_SIZE];
-    const char *v = ipsec_version_string();
-    int i;
-
-    if(pluto_vendorid_built) {
-	return pluto_vendorid;
-    }
-
-    osMD5Init(&hc);
-    osMD5Update(&hc, (const unsigned char *)v, strlen(v));
-    osMD5Update(&hc, (const unsigned char *)compile_time_interop_options
-	, strlen(compile_time_interop_options));
-    osMD5Final(hash, &hc);
-
-    pluto_vendorid[0] = 'O';
-    pluto_vendorid[1] = 'S';
-    pluto_vendorid[2] = 'W';
-
-#if PLUTO_VENDORID_SIZE - 3 <= MD5_DIGEST_SIZE
-    /* truncate hash to fit our vendor ID */
-    memcpy(pluto_vendorid + 3, hash, PLUTO_VENDORID_SIZE - 3);
-#else
-    /* pad to fill our vendor ID */
-    memcpy(pluto_vendorid + 3, hash, MD5_DIGEST_SIZE);
-    memset(pluto_vendorid + 3 + MD5_DIGEST_SIZE, '\0'
-	, PLUTO_VENDORID_SIZE - 3 - MD5_DIGEST_SIZE);
-#endif
-
-    /* Make it printable!  Hahaha - MCR */
-    for (i = 0; i < PLUTO_VENDORID_SIZE; i++)
-    {
-	/* Reset bit 7, force bit 6.  Puts it into 64-127 range */
-	pluto_vendorid[i] &= 0x7f;
-	pluto_vendorid[i] |= 0x40;
-        if(pluto_vendorid[i]==127) pluto_vendorid[i]='_';  /* omit RUBOUT */
-    }
-    pluto_vendorid[PLUTO_VENDORID_SIZE] = '\0';
-    pluto_vendorid_built = TRUE;
-
-    return pluto_vendorid;
-}
-
 
 /* MAGIC: perform f, a function that returns notification_t
  * and return from the ENCLOSING stf_status returning function if it fails.
@@ -377,11 +322,16 @@ ipsecdoi_initiate(int whack_sock
 	initiator_function *initiator = pick_initiator(c, policy);
 
 	if(initiator) {
-	    (void) initiator(whack_sock, c, NULL, &created, policy, try, importance
-                             , uctx
-                             );
-            c->prospective_parent_sa = created;
-	    return created;
+            stf_status ret = initiator(whack_sock, c
+                                       , NULL, &created, policy, try, importance
+                                       , uctx);
+
+            if(ret == STF_OK || ret == STF_SUSPEND) {
+                c->prospective_parent_sa = created;
+                return created;
+            } else {
+                return SOS_NOBODY;
+            }
 	}
     }
     else if (HAS_IPSEC_POLICY(policy)) {
@@ -393,7 +343,7 @@ ipsecdoi_initiate(int whack_sock
 
       if (!IS_ISAKMP_SA_ESTABLISHED(old_parent_state->st_state)) {
 	/* leave our Phase 2 negotiation pending */
-	add_pending(whack_sock, old_child_state, c, policy, try
+	add_pending(whack_sock, old_parent_state, c, policy, try
 		    , replacing
 		    , uctx
 		   );
@@ -433,7 +383,7 @@ update_policy_from_state(const struct state *st, lset_t policy)
         if (st->st_ah.attrs.encapsulation == ENCAPSULATION_MODE_TUNNEL)
             policy |= POLICY_TUNNEL;
     }
-    if (st->st_esp.present && st->st_esp.attrs.transattrs.encrypt != ESP_NULL)
+    if (st->st_esp.present && st->st_esp.attrs.transattrs.encrypt != IKEv2_ENCR_NULL)
     {
         policy |= POLICY_ENCRYPT;
         if (st->st_esp.attrs.encapsulation == ENCAPSULATION_MODE_TUNNEL)
@@ -463,25 +413,19 @@ ipsecdoi_replace(struct state *st
 		 , lset_t policy_add, lset_t policy_del
 		 , unsigned long try)
 {
-	initiator_function *initiator;
+    initiator_function *initiator;
+    struct connection *c = st->st_connection;
     int whack_sock = dup_any(st->st_whack_sock);
     lset_t policy = st->st_policy;
     so_serial_t  newstateno;
 
-    struct state *old_parent_state = state_with_serialno(st->st_clonedfrom);
-    if(old_parent_state == NULL) {
-        old_parent_state = st;
-    }
-
     if (IS_PHASE1(st->st_state) || IS_PARENT_SA(st) || IS_PHASE15(st->st_state))
     {
-	struct connection *c = st->st_connection;
 	policy = c->policy & ~POLICY_IPSEC_MASK;
 	policy = policy & ~policy_del;
 	policy = policy | policy_add;
 
 	initiator = pick_initiator(c, policy);
-	passert(!HAS_IPSEC_POLICY(policy));
 	if(initiator) {
 	    (void) initiator(whack_sock, st->st_connection, st, &newstateno, policy
 			     , try, st->st_import
@@ -490,10 +434,24 @@ ipsecdoi_replace(struct state *st
     }
     else
     {
+	/* Use the newest Parent SA */
+	struct state *parent = find_phase1_state(c
+				, ISAKMP_SA_ESTABLISHED_STATES | PHASE1_INITIATOR_STATES);
+
+	if (parent) {
+	    if (parent->st_serialno != st->st_clonedfrom) {
+		DBG(DBG_CONTROL, DBG_log("Switched parent SA from #%lu to #%lu for rekey",
+				     st->st_clonedfrom, parent->st_serialno));
+	    } else {
+		DBG(DBG_CONTROL, DBG_log("Using existing parent SA #%lu for rekey",
+				     parent->st_serialno));
+	    }
+	}
+
         policy = update_policy_from_state(st, policy);
 	passert(HAS_IPSEC_POLICY(policy));
 	ipsecdoi_initiate(whack_sock
-                          , old_parent_state
+                          , parent
                           , st
                           , st->st_connection, policy, try
 			  , st->st_serialno, st->st_import
@@ -656,6 +614,7 @@ decode_peer_id(struct msg_digest *md, bool initiator, bool aggrmode)
     peer.kind = id->isaid_idtype;
 
     if(!extract_peer_id(&peer, id_pbs)) {
+        openswan_log("Failed to decode peer ID from certificate");
 	return FALSE;
     }
 
@@ -675,8 +634,17 @@ decode_peer_id(struct msg_digest *md, bool initiator, bool aggrmode)
 		     , enum_show(&ident_names, id->isaid_idtype), buf);
     }
 
-    /* check for certificates */
-    decode_cert(md);
+    switch(id->isaid_idtype) {
+    case ID_DER_ASN1_DN:
+    case ID_DER_ASN1_GN:
+        /* check for certificates */
+        decode_cert(md);
+        break;
+
+    default:
+        /* do not look at certificate, it can not matter */
+        break;
+    }
 
     /* Now that we've decoded the ID payload, let's see if we
      * need to switch connections.
@@ -705,13 +673,13 @@ decode_peer_id(struct msg_digest *md, bool initiator, bool aggrmode)
 	struct connection *r;
 
 	/* check for certificate requests */
-	decode_cr(md, &c->requested_ca);
+	ikev1_decode_cr(md, &c->ikev1_requested_ca_names);
 
 	r = refine_host_connection(st, &peer, initiator, aggrmode);
 
 	/* delete the collected certificate requests */
-	free_generalNames(c->requested_ca, TRUE);
-	c->requested_ca = NULL;
+	free_generalNames(c->ikev1_requested_ca_names, TRUE);
+	c->ikev1_requested_ca_names = NULL;
 
 	if (r == NULL)
 	{
@@ -739,7 +707,10 @@ decode_peer_id(struct msg_digest *md, bool initiator, bool aggrmode)
 
         if (r != c)
 	{
-            openswan_log("switched from \"%s\" to \"%s\"", c->name, r->name);
+            char instance[1 + 10 + 1];
+
+            openswan_log("switched from \"%s\" to \"%s\"%s", c->name, r->name
+                         , fmt_connection_inst_name(r, instance, sizeof(instance)));
 
 	    st->st_connection = r;	/* kill reference to c */
 
@@ -775,7 +746,7 @@ void initialize_new_state(struct state *st
     st->st_try   = try;
 
     st->st_import = importance;
-    st->st_msgid_nextuse = 1;     /* first non-INIT message is 1 */
+    st->st_msgid_nextuse = c->first_msgid; // defaults to 0, firstmsgid=[0|1] from ipsec.conf
     st->st_msgid_lastack = INVALID_MSGID;
 
     for(sr=&c->spd; sr!=NULL; sr=sr->next) {
@@ -833,9 +804,9 @@ void fmt_ipsec_sa_established(struct state *st, char *sadetails, int sad_len)
 		 , natinfo
 		 , (unsigned long)ntohl(st->st_esp.attrs.spi)
 		 , (unsigned long)ntohl(st->st_esp.our_spi)
-		 , enum_show(&esp_transformid_names, st->st_esp.attrs.transattrs.encrypt)+strlen("ESP_")
+		 , enum_show(&trans_type_encr_names, st->st_esp.attrs.transattrs.encrypt)
 		 , st->st_esp.attrs.transattrs.enckeylen
-		 , enum_show(&auth_alg_names, st->st_esp.attrs.transattrs.integ_hash)+strlen("AUTH_ALGORITHM_"));
+		 , enum_show(&trans_type_integ_names, st->st_esp.attrs.transattrs.integ_hash));
 	ini = " ";
 	fin = "}";
     }
@@ -956,57 +927,51 @@ void fmt_isakmp_sa_established(struct state *st, char *sadetails, int sad_len)
     st->hidden_variables.st_logged_p1algos = TRUE;
 }
 
-void __ikev2_validate_key_lengths(struct state *st, const char *fn, int ln)
+void __validate_key_lengths(struct state *st, const char *vers, const char *fn, int ln)
 {
-    const char *enc_name, *integ_name;
-    size_t expected_enc_key_bytes, expected_integ_key_bytes;
+    size_t expected_enc_key_len, expected_integ_key_len;
 
-    if (!st)
-	return;
+    expected_enc_key_len = st->st_oakley.enckeylen / 8;
 
-    /* test the encryption key length */
-    enc_name = st->st_oakley.encrypter
-	? st->st_oakley.encrypter->common.officname : "?",
-    expected_enc_key_bytes = st->st_oakley.enckeylen / 8;
+    passert(st->st_oakley.encrypter != NULL);
 
-    if (expected_enc_key_bytes != st->st_skey_ei.len) {
-        DBG_log("WARNING: %s:%u: encryptor '%s' expects keylen %ld/%d, SA #%ld INITIATOR keylen is %ld",
-                fn, ln, enc_name, (long int)expected_enc_key_bytes,
+    if (expected_enc_key_len != st->st_skey_ei.len)
+        DBG_log("WARNING: %s:%u: %s encryptor '%s' expects keylen %ld/%d, SA #%ld INITIATOR keylen is %ld",
+                fn, ln, vers,
+                st->st_oakley.encrypter->common.officname,
+                (unsigned long)expected_enc_key_len,
                 st->st_oakley.enckeylen,
-                st->st_serialno,
-                (long int)st->st_skey_ei.len);
-    }
+                (unsigned long)st->st_serialno,
+                (unsigned long)st->st_skey_ei.len);
 
-    if (expected_enc_key_bytes != st->st_skey_er.len) {
-        DBG_log("WARNING: %s:%u: encryptor '%s' expects keylen %ld/%d, SA #%ld RESPONDER keylen is %ld",
-                fn, ln, enc_name, (long int)expected_enc_key_bytes,
+    if (expected_enc_key_len != st->st_skey_er.len)
+        DBG_log("WARNING: %s:%u: %s encryptor '%s' expects keylen %ld/%d, SA #%ld RESPONDER keylen is %ld",
+                fn, ln, vers,
+                st->st_oakley.encrypter->common.officname,
+                (unsigned long)expected_enc_key_len,
                 st->st_oakley.enckeylen,
-                st->st_serialno,
-                (long int)st->st_skey_er.len);
-    }
+                (unsigned long)st->st_serialno,
+                (unsigned long)st->st_skey_er.len);
 
-    if (!st->st_oakley.integ_hasher)
-	return;
+    expected_integ_key_len = st->st_oakley.integ_hasher->hash_key_size;
 
-    /* we have the integ_hasher, test the integrity key length */
-    integ_name = st->st_oakley.integ_hasher->common.officname;
-    expected_integ_key_bytes = st->st_oakley.integ_hasher->hash_key_size;
+    if (expected_integ_key_len != st->st_skey_ai.len)
+        DBG_log("WARNING: %s:%u: %s hasher '%s' expects keylen %ld/%ld, SA #%ld INITIATOR keylen is %ld",
+                fn, ln, vers,
+                st->st_oakley.integ_hasher->common.officname,
+                (unsigned long)expected_integ_key_len,
+                (unsigned long)st->st_oakley.integ_hasher->hash_key_size,
+                (unsigned long)st->st_serialno,
+                (unsigned long)st->st_skey_ai.len);
 
-    if (expected_integ_key_bytes != st->st_skey_ai.len) {
-        DBG_log("WARNING: %s:%u: hasher '%s' expects keylen %ld/%ld, SA #%ld INITIATOR keylen is %ld",
-                fn, ln, integ_name, (long int)expected_integ_key_bytes,
-                (long int)st->st_oakley.integ_hasher->hash_key_size,
-                st->st_serialno,
-                (long int)st->st_skey_ai.len);
-    }
-
-    if (expected_integ_key_bytes != st->st_skey_ar.len) {
-        DBG_log("WARNING: %s:%u: hasher '%s' expects keylen %ld/%ld, SA #%ld RESPONDER keylen is %ld",
-                fn, ln, integ_name, (long int)expected_integ_key_bytes,
-                (long int)st->st_oakley.integ_hasher->hash_key_size,
-                st->st_serialno,
-                (long int)st->st_skey_ar.len);
-    }
+    if (expected_integ_key_len != st->st_skey_ar.len)
+        DBG_log("WARNING: %s:%u: %s hasher '%s' expects keylen %ld/%ld, SA #%ld RESPONDER keylen is %ld",
+                fn, ln, vers,
+                st->st_oakley.integ_hasher->common.officname,
+                (unsigned long)expected_integ_key_len,
+                (unsigned long)st->st_oakley.integ_hasher->hash_key_size,
+                (unsigned long)st->st_serialno,
+                (unsigned long)st->st_skey_ar.len);
 }
 
 

@@ -42,7 +42,7 @@
 #include <security/pam_appl.h>
 #endif
 #include "pluto/connections.h"	/* needs id.h */
-#include "state.h"
+#include "pluto/state.h"
 #include "kernel.h"	/* needs connections.h */
 #include "log.h"
 #include "packet.h"	/* so we can calculate sizeof(struct isakmp_hdr) */
@@ -57,8 +57,8 @@
 #include "sha1.h"
 #include "md5.h"
 #include "cookie.h"
-#include "crypto.h" /* requires sha1.h and md5.h */
-#include "spdb.h"
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/spdb.h"
 
 #ifdef HAVE_LIBNSS
 # include <nss.h>
@@ -308,6 +308,27 @@ rehash_state(struct state *st)
     insert_state(st);
 }
 
+struct state *st_state_to_be_freed = NULL;
+/*
+ * place a state onto a chain of states to delete in the main loop.
+ */
+static void
+mark_state_freed(struct state *st)
+{
+    st->st_hashchain_next = st_state_to_be_freed;
+    st_state_to_be_freed = st;
+}
+
+void
+do_state_frees(void)
+{
+    while(st_state_to_be_freed != NULL) {
+        struct state *tbf = st_state_to_be_freed;
+        st_state_to_be_freed = st_state_to_be_freed->st_hashchain_next;
+        free_state(tbf);
+    }
+}
+
 /* unlink a state object from the hash table, but don't free it
  */
 void
@@ -324,6 +345,12 @@ unhash_state(struct state *st)
 	if(*p != st) {
 	    p = state_hash(st->st_icookie, zero_cookie, NULL);
 	}
+        if (!*p) {
+            DBG(DBG_CONTROL
+                , DBG_log("state object #%lu not found in state hash."
+                          , st->st_serialno));
+            return;
+        }
     } else {
 	p = &st->st_hashchain_prev->st_hashchain_next;
     }
@@ -565,10 +592,11 @@ delete_state(struct state *st)
     connection_discard(c);
 
     change_state(st, STATE_UNDEFINED);
-
     release_whack(st);
 
-    change_state(st, STATE_CHILDSA_DEL);
+    /* object is not deleted here, because it still exists in many stack
+     * frames, but instead is added to a to-be-freed list */
+    mark_state_freed(st);
 }
 
 /*
@@ -748,7 +776,7 @@ delete_states_by_connection(struct connection *c, bool relations)
     if (ck == CK_INSTANCE)
     {
 	c->kind = ck;
-	delete_connection(c, relations);
+	delete_connection(c, relations, FALSE);
     }
 }
 
@@ -791,7 +819,7 @@ delete_p2states_by_connection(struct connection *c)
     if (ck == CK_INSTANCE)
     {
 	c->kind = ck;
-	delete_connection(c, TRUE);
+	delete_connection(c, TRUE, FALSE);
     }
 }
 
@@ -838,7 +866,7 @@ rekey_p2states_by_connection(struct connection *c)
     if (ck == CK_INSTANCE)
     {
 	c->kind = ck;
-	delete_connection(c, TRUE);
+	delete_connection(c, TRUE, FALSE);
     }
 }
 

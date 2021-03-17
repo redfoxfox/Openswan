@@ -33,7 +33,7 @@ UNITTESTARGS=
 check:
 	@mkdir -p OUTPUT
 	@echo CC ${TESTNAME}.c
-	@${CC} -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
+	@${CC} -Wno-pointer-sign -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
 	@echo "file ${TESTNAME}"          >.gdbinit
 	@echo "set args "${UNITTESTARGS} >>.gdbinit
 	${COREULIMIT} && ./${TESTNAME} ${UNITTESTARGS} >OUTPUT/${TESTNAME}.txt 2>&1
@@ -52,4 +52,5 @@ initiate:
 	(echo ': RSA	{'; ${OBJDIRTOP}/programs/rsasigkey/rsasigkey --random /dev/urandom 4096 --hostname fivetwelve; echo '  }') >key-4096.secrets
 	(echo ': RSA	{'; ${OBJDIRTOP}/programs/rsasigkey/rsasigkey --random /dev/urandom 8192 --hostname fivetwelve; echo '  }') >key-8192.secrets
 
-
+clean:
+	@rm -f ${TESTNAME}

@@ -5,7 +5,7 @@
 /* Openswan config file parser (parser.l)
  * Copyright (C) 2001 Mathieu Lafon - Arkoon Network Security
  * Copyright (C) 2003-2007 Michael Richardson <mcr@xelerance.com>
- * Copyright (C) 2008 D. Hugh Redelmeier <hugh@mimosa.com>
+ * Copyright (C) 2008, 2014 D. Hugh Redelmeier <hugh@mimosa.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -55,6 +55,13 @@ extern int yylex (void);
 extern int yydebug;
 extern int verbose;
 
+/* if glob() does not support GLOB_BRACE, then
+ * resulting system just does not {a,b}
+ */
+#ifndef GLOB_BRACE
+#define GLOB_BRACE 0
+#endif
+
 struct ic_inputsource {
 	YY_BUFFER_STATE state;
 	FILE  *file;
@@ -66,6 +73,7 @@ struct ic_inputsource {
 
 static struct {
 	int stack_ptr;
+        int eof_reached;
 	struct ic_inputsource stack[MAX_INCLUDE_DEPTH];
 } ic_private;
 
@@ -204,11 +212,11 @@ int parser_y_include (const char *filename)
 			     "%s%s", rootdir2, filename);
 		    try = newname2;
 
-		    globresult = glob(try, GLOB_BRACE|GLOB_NOMAGIC, NULL, &globbuf);
+		    globresult = glob(try, GLOB_BRACE, NULL, &globbuf);
 	    }
 	} else {
 		/* try globbing plain name now.. */
-		globresult = glob(try, GLOB_BRACE|GLOB_NOMAGIC, NULL, &globbuf);
+		globresult = glob(try, GLOB_BRACE, NULL, &globbuf);
 	}
 
 	if(globresult == GLOB_NOMATCH)
@@ -247,7 +255,11 @@ int parser_y_include (const char *filename)
 
 int parser_y_eof(void)
 {
-	if(stacktop->state != YY_CURRENT_BUFFER) {
+        if(ic_private.eof_reached) {
+                return 1;
+        }
+
+	if(stacktop->state != YY_CURRENT_BUFFER && ic_private.stack_ptr > 0) {
 		yy_delete_buffer(YY_CURRENT_BUFFER);
 	}
 
@@ -268,13 +280,17 @@ int parser_y_eof(void)
 			}
 		}
 
-		if(stacktop->state != YY_CURRENT_BUFFER)  {
+		if(stacktop->state != YY_CURRENT_BUFFER && stacktop->state != NULL)  {
 			yy_switch_to_buffer(stacktop->state);
 		}
 
 		parser_y_close(stacktop);
 
 		if (--ic_private.stack_ptr < 0) {
+#if 0
+                        starter_log(LOG_LEVEL_DEBUG, "end of top file reached");
+#endif
+                        ic_private.eof_reached = 1;
 			return 1;
 		}
 		stacktop = &ic_private.stack[ic_private.stack_ptr];
@@ -294,11 +310,14 @@ int parser_y_eof(void)
      */
 
 %x USERDEF BOOLEAN COMMENTEQUAL COMMENTSTRING
+%option noyywrap
 
 %%
 
 <<EOF>>	{
+        /* maybe end of this file, return to parent include */
 	if(parser_y_eof()) {
+          /* nope, it is really end of everything */
 		yyterminate();
 	}
 }
@@ -315,10 +334,19 @@ int parser_y_eof(void)
 
 [\t ]+			/* ignore spaces in line */ ;
 
-<USERDEF>[0-9]+         { /* process a number */
-                           yylval.num = strtoul(yytext, NULL, 10);
+<INITIAL,USERDEF>[0-9]+ { /* process a number */
+                           unsigned long val = (errno = 0, strtoul(yytext, NULL, 10));
+                           if (errno != 0 || val > UINT_MAX) {
+                               char ebuf[128];
+                          
+                               snprintf(ebuf, sizeof(ebuf),
+                                   "number too large: %s",
+                                   yytext);
+                               yyerror(ebuf);
+                           }
+                           yylval.num = val;
                            BEGIN INITIAL;
-			   return INTEGER;
+                           return INTEGER;
                         }
 
 <USERDEF>%forever       { /* a number, really 0 */
@@ -446,9 +474,6 @@ include			return INCLUDE;
 .			yyerror(yytext);
 %%
 
-int yywrap(void) {
-	return 1;
-}
 
 /*
  * Local Variables:

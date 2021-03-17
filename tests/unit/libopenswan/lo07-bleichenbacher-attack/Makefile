@@ -27,7 +27,8 @@ EXTRALIBS+=${NSS_LIBS} ${FIPS_LIBS}    ${LIBGMP} ${CRYPTOLIBS} ${LIBPLUTO}
 
 EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_crypto.o
 EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_rsa.o
-EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/keys.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/keymgmt.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/signatures.o
 EXTRAOBJS+=${OBJDIRTOP}/lib/libopenswan/oswconf.o
 
 EXTRAFLAGS+=${NSS_FLAGS}    ${FIPS_FLAGS}
@@ -37,6 +38,9 @@ TESTNUMBER=lo07-bleichenbacher-attack
 TESTNAME=bleichenbacher-attack
 UNITTESTARGS=
 
+programs: ${TESTNAME}
+.PHONY: programs
+
 Q=$(if $V,,@)
 
 check: ${TESTNAME}
@@ -45,10 +49,9 @@ check: ${TESTNAME}
 	diff OUTPUT/${TESTNAME}.txt output.txt
 	@: recordresults lib-$testobj "$testexpect" "$stat" lib-$testobj false
 
-.PHONY: ${TESTNAME}
 ${TESTNAME}: ${TESTNAME}.c
 	@echo CC ${TESTNAME}.c
-	$Q${CC} -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRAOBJS} ${EXTRALIBS}
+	$Q${CC} -Wno-pointer-sign -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRAOBJS} ${EXTRALIBS}
 	@echo "file ${TESTNAME}"          >.gdbinit
 	@echo "set args "${UNITTESTARGS} >>.gdbinit
 
@@ -58,4 +61,6 @@ update:
 
 initiate:
 
+clean:
+	@rm -f ${TESTNAME}
 

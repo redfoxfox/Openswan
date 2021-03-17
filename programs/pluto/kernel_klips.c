@@ -39,7 +39,7 @@
 #include "defs.h"
 #include "id.h"
 #include "pluto/connections.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "kernel.h"
 #include "kernel_pfkey.h"
 #include "timer.h"
@@ -363,7 +363,7 @@ const struct kernel_ops klips_kernel_ops = {
     get_spi: NULL,
     eroute_idle: pfkey_was_eroute_idle,
     inbound_eroute: FALSE,
-    policy_lifetime: FALSE,
+    scan_shunts: pfkey_scan_proc_shunts,
     init: init_pfkey,
     exceptsocket: NULL,
     docommand: klips_do_command,

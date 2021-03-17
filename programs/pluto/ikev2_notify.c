@@ -27,24 +27,24 @@
 #include "sysdep.h"
 #include "constants.h"
 #include "defs.h"
-#include "state.h"
+#include "pluto/state.h"
 #include "id.h"
 #include "pluto/connections.h"
 #include "hostpair.h"
 
-#include "crypto.h" /* requires sha1.h and md5.h */
+#include "pluto/crypto.h" /* requires sha1.h and md5.h */
 #include "sha1.h"   /* for NAT DETECTION processing */
 #include "x509.h"
 #include "x509more.h"
-#include "ike_alg.h"
+#include "pluto/ike_alg.h"
 #include "kernel_alg.h"
-#include "plutoalg.h"
+#include "pluto/plutoalg.h"
 #include "pluto_crypt.h"
 #include "packet.h"
 #include "demux.h"
 #include "ikev2.h"
 #include "log.h"
-#include "spdb.h"          /* for out_sa */
+#include "pluto/spdb.h"          /* for out_sa */
 #include "ipsec_doi.h"
 #include "vendor.h"
 #include "timer.h"
@@ -123,17 +123,18 @@ stf_status process_nat_payload(struct state *st
     if(same_chunk(*data, calculated_hash)) {
         DBG(DBG_PARSING|DBG_CONTROLMORE, DBG_log("nat-t payloads for %s match: no NAT", payload_name));
     } else {
-        st->hidden_variables.st_nat_traversal = NAT_T_WITH_RFC_VALUES |
-            NAT_T_DETECTED;
+	st->hidden_variables.st_nat_traversal = NAT_T_WITH_RFC_VALUES;
 
         switch(notify_type) {
         case v2N_NAT_DETECTION_DESTINATION_IP:
             loglog(RC_COMMENT, "detected that I am NATed");
+	    st->hidden_variables.st_nat_traversal |= LELEM(NAT_TRAVERSAL_NAT_BHND_ME);
             break;
         case v2N_NAT_DETECTION_SOURCE_IP:
             addrtot(addr, 0, addrbuf, ADDRTOT_BUF);
             loglog(RC_COMMENT, "detected that they are NATed at: %s:%u"
                          , addrbuf, port);
+	    st->hidden_variables.st_nat_traversal |= LELEM(NAT_TRAVERSAL_NAT_BHND_PEER);
             break;
         default:
             break;
@@ -203,6 +204,12 @@ stf_status ikev2_process_notifies(struct state *st, struct msg_digest *md)
     }
 
     return STF_OK;
+}
+
+void ikev2_enable_nat_keepalives(struct state *st)
+{
+    if (st->hidden_variables.st_nat_traversal & NAT_T_WITH_KA)
+	nat_traversal_new_ka_event();
 }
 
 /* add notify payload to the rbody */

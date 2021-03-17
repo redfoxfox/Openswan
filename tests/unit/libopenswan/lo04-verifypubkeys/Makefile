@@ -33,7 +33,7 @@ UNITTESTARGS=
 check:
 	@mkdir -p OUTPUT
 	@echo CC ${TESTNAME}.c
-	@${CC} -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
+	@${CC} -Wno-pointer-sign -o ${TESTNAME} ${EXTRAFLAGS} ${TESTNAME}.c ${EXTRALIBS} ${EXTRALIBS}
 	@echo "file ${TESTNAME}"          >.gdbinit
 	@echo "set args "${UNITTESTARGS} >>.gdbinit
 	${COREULIMIT} && ./${TESTNAME} ${UNITTESTARGS} >OUTPUT/${TESTNAME}.txt 2>&1
@@ -50,5 +50,7 @@ setup:
 		${OBJDIRTOP}/programs/showhostkey/showhostkey --left --file ../lo02-verifysigs/key-$${n}.secrets | sed -n -e /leftrsa/s/^.*leftrsasigkey=//p >pubkey-$${n}.pubkey; \
         done
 
+clean:
+	@rm -f ${TESTNAME}
 
 

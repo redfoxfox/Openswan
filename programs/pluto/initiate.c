@@ -59,7 +59,7 @@
 #include "foodgroups.h"
 #include "packet.h"
 #include "demux.h"	/* needs packet.h */
-#include "state.h"
+#include "pluto/state.h"
 #include "timer.h"
 #include "ipsec_doi.h"	/* needs demux.h and state.h */
 #include "pluto/server.h"
@@ -70,11 +70,11 @@
 #include "dnskey.h"	/* needs keys.h and adns.h */
 #include "whack.h"
 #include "alg_info.h"
-#include "spdb.h"
-#include "ike_alg.h"
+#include "pluto/spdb.h"
+#include "pluto/ike_alg.h"
 #include "plutocerts.h"
 #include "kernel_alg.h"
-#include "plutoalg.h"
+#include "pluto/plutoalg.h"
 #include "xauth.h"
 #ifdef NAT_TRAVERSAL
 #include "nat_traversal.h"
@@ -108,6 +108,11 @@ initiate_a_connection(struct connection *c
     if (!oriented(*c))
     {
 	loglog(RC_ORIENT, "We cannot identify ourselves with either end of this connection.");
+    }
+    else if (IS_INVALID_CONFIG(c->policy))
+    {
+	loglog(RC_INITSHUNT
+	       , "cannot initiate connection due to invalid configuration");
     }
     else if (NEVER_NEGOTIATE(c->policy))
     {
@@ -1527,7 +1532,9 @@ ISAKMP_SA_established(struct connection *c, so_serial_t serial)
 	{
 	    struct connection *next = d->ac_next;	/* might move underneath us */
 
-	    if ( ((d->kind == CK_PERMANENT) || (d->kind == CK_INSTANCE) || (d->kind == CK_GOING_AWAY))
+	    if ( c != d
+	    && ((d->kind == CK_PERMANENT) || (d->kind == CK_INSTANCE)
+		|| (d->kind == CK_GOING_AWAY))
 	    && same_id(&c->spd.this.id, &d->spd.this.id)
 	    && same_id(&c->spd.that.id, &d->spd.that.id)
 	    && (!sameaddr(&c->spd.that.host_addr, &d->spd.that.host_addr)
@@ -1631,6 +1638,7 @@ static void connection_check_ddns1(struct connection *c)
      * lookup
      */
     update_host_pairs(c);
+    c->proposal_index = 0;
     initiate_connection(c->name, NULL_FD, 0, pcim_demand_crypto);
 
     /* no host pairs,  no more to do */
@@ -1715,11 +1723,11 @@ void connection_check_phase2(void)
 	    struct state *p1st;
             bool kicknow = kick_adns_connection(c, NULL);
 
-	    openswan_log("pending Quick Mode with %s \"%s\" took too long -- replacing phase 1"
+            if(kicknow) {
+                openswan_log("pending Quick Mode with %s \"%s\" took too long -- replacing phase 1"
 			 , ip_str(&c->spd.that.host_addr)
 			 , c->name);
 
-            if(kicknow) {
                 /*
                  * look for a phase 1 to kill, but not point in doing that until we
                  * actually have something new to try.

@@ -17,12 +17,13 @@
  * for more details.
  */
 
+#define _GNU_SOURCE   /* for sighandler_t */
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <wait.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -45,10 +46,10 @@
 #include "rnd.h"
 #include "id.h"
 #include "pluto/connections.h"        /* needs id.h */
-#include "state.h"
+#include "pluto/state.h"
 #include "timer.h"
 #include "kernel.h"
-#include "kernel_netlink.h"
+#include "kernel_forces.h"
 #include "kernel_pfkey.h"
 #include "kernel_noklips.h"
 #include "packet.h"
@@ -134,7 +135,7 @@ bool invoke_command(const char *verb, const char *verb_suffix, char *cmd)
          * Any used by library routines (perhaps the resolver or syslog)
          * will remain.
          */
-	__sighandler_t savesig;
+        sighandler_t savesig;
         FILE *f;
 
 	savesig = signal(SIGCHLD, SIG_DFL);

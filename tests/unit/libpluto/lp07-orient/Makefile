@@ -19,47 +19,39 @@ EXTRAFLAGS+=${USERCOMPILE} ${PORTINCLUDE} -I..
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/programs/pluto
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/include/pluto
 EXTRAFLAGS+=-I${OPENSWANSRCDIR}/include
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/spdb_print.o
-EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG}
-
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/virtual.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/rcv_whack.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/myid.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/foodgroups.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ipsec_doi.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_parent.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_child.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_notify.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_derived_keys.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_prfplus.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2_x509.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/state.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/msgdigest.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/hmac.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/plutoalg.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/db_ops.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/crypt_utils.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/cookie.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/spdb.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/spdb_struct.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/spdb_v2_struct.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/crypto.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ikev2.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/virtual.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/rcv_whack.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/myid.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/foodgroups.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ipsec_doi.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_parent.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_child.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_notify.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_derived_keys.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_prfplus.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_x509.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/state.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/replace.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/msgdigest.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/hmac.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/crypt_utils.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/cookie.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb_struct.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/spdb_v2_struct.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/crypto.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/keymgmt.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_status.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ikev2_alg.o
 ifeq ($(USE_EXTRACRYPTO),true)
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg_blowfish.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg_twofish.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg_serpent.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_blowfish.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_twofish.o
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/ike_alg_serpent.o
 endif
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg_aes.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/ike_alg_sha2.o
-EXTRALIBS+=${OBJDIRTOP}/programs/pluto/vendor.o
-EXTRALIBS+=${PLUTOLIB} ${CRYPTOLIBS} ${WHACKLIB}
-EXTRALIBS+=${LIBDESLITE} ${LIBAES}
+EXTRAOBJS+=${OBJDIRTOP}/programs/pluto/vendor.o
 EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG} ${LIBOSWKEYS}
-EXTRALIBS+=${LIBPLUTO} ${CRYPTOLIBS} ${WHACKLIB}
+EXTRALIBS+=${LIBPLUTO} ${LIBALGOPARSE} ${CRYPTOLIBS} ${WHACKLIB}
 EXTRALIBS+=${LIBDESLITE} ${LIBAES}
-EXTRALIBS+=${LIBOSWLOG} ${LIBOPENSWAN} ${LIBOSWLOG}
 EXTRALIBS+=${NSS_LIBS} ${FIPS_LIBS}
 EXTRALIBS+=-lgmp ${LIBEFENCE} -lpcap  ${NSS_LIBS} ${FIPS_LIBS}
 
@@ -72,20 +64,20 @@ OUTPUTS=OUTPUT
 include Makefile.testcase
 EF_DISABLE_BANNER=1
 export EF_DISABLE_BANNER
-
+FILTERS=sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed -f ${TESTUTILS}/certsize.sed
 
 Q=$(if ${V},,@)
 programs ${TESTNAME}: ${TESTNAME}.c
 	@echo " CC ${TESTNAME}"
 	${Q}${CC} -c -g -O0 ${TESTNAME}.c ${EXTRAFLAGS}
 	@echo " LD ${TESTNAME}"
-	${Q}${CC} -g -O0 -o ${TESTNAME} ${TESTNAME}.o ${EXTRAFLAGS} ${EXTRALIBS}
+	${Q}${CC} -g -O0 -o ${TESTNAME} ${TESTNAME}.o ${EXTRAFLAGS} ${EXTRAOBJS} ${EXTRALIBS}
 
 check:	${WHACKFILE} ${TESTNAME} OUTPUT
 	@echo "file ${TESTNAME}"          >.gdbinit
 	@echo "set args "${UNITTESTARGS} >>.gdbinit
 	ulimit -c unlimited && ./${TESTNAME} ${UNITTESTARGS} >OUTPUT/${TESTNAME}.txt 2>&1
-	@sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed OUTPUT/${TESTNAME}.txt | diff - output.txt
+	@${FILTERS} OUTPUT/${TESTNAME}.txt | diff - output.txt
 
 OUTPUT:
 	@mkdir -p OUTPUT
@@ -100,7 +92,7 @@ ${WHACKFILE}: ${WHACKREFFILE} OUTPUT
 endif
 
 update:
-	sed -f ${TESTUTILS}/leak-detective.sed -f ${TESTUTILS}/whack-processing.sed OUTPUT/${TESTNAME}.txt >output.txt
+	${FILTERS} OUTPUT/${TESTNAME}.txt >output.txt
 
 clean:
 	rm -f ${TESTNAME} ${WHACKFILE} *.o *~

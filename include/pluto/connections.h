@@ -108,13 +108,13 @@
  *   as the original policy, even though its subnets might be smaller.
  * - display format: n,m
  */
-typedef unsigned long policy_prio_t;
+typedef uint32_t policy_prio_t;
 #define BOTTOM_PRIO   ((policy_prio_t)0)	/* smaller than any real prio */
 #define set_policy_prio(c) { (c)->prio = \
 	((policy_prio_t)(c)->spd.this.client.maskbits << 16) \
 	| ((policy_prio_t)(c)->spd.that.client.maskbits << 8) \
 	| (policy_prio_t)1; }
-#define POLICY_PRIO_BUF	(3+1+3+1)
+#define POLICY_PRIO_BUF	(3+1+3+1+10) 
 extern void fmt_policy_prio(policy_prio_t pp, char buf[POLICY_PRIO_BUF]);
 
 /* Note that we include this even if not X509, because we do not want the
@@ -142,6 +142,25 @@ struct dns_end_list {
     struct addrinfo *next_address;  /* next one to try */
 };
 
+/*
+ * An end describes one side of the connection.
+ *
+ * There is some unfortunate and unwanted connection between the outer (end-point)
+ * of the connection (which is contained in host_type, host_addr, host_port, and keys/certs)
+ * and the inside part of the connection
+ * (which is represented by client, has_client, has_port_wildcard, port and protocol)
+ * Future work will split these, moving things around up to spd_route, as there can
+ * in general be multiple outer addresses, and also multiple inner (traffic-selectors),
+ * and they are not necessarily related.
+ *
+ * The outer host_type and host_addr may be passed to
+ *
+ *    const char *end_type_name(struct keyword_host host_type, ip_address *host_addr
+ *                              , char  *outbuf, size_t outbuf_len)
+ *
+ * to create a string representation.
+ *
+ */
 struct end {
     struct id id;
     bool      left;
@@ -152,14 +171,17 @@ struct end {
 	host_addr,
 	host_nexthop,
 	host_srcip;
-    ip_subnet client;           /* consider replacing this with p2id from ikev1_quick.c */
     ip_address saved_hint_addr;  /* the address we got from the cfg file if IPHOSTNAME */
     struct dns_end_list host_address_list;
 
     bool key_from_DNS_on_demand;
+    /* this section is about what's inside the SA */
+    ip_subnet client;           /* consider replacing this with p2id from ikev1_quick.c */
     bool has_client;
     bool has_client_wildcard;
     bool has_port_wildcard;
+    bool client_is_self;        /* true if the end point is the same as host */
+    struct virtual_t *virt;
     char *updown;
     u_int16_t host_port;	/* where the IKE port is */
     bool      host_port_specific; /* if TRUE, then IKE ports are tested for*/
@@ -176,7 +198,6 @@ struct end {
 
     struct ietfAttrList *groups;/* access control groups */
 
-    struct virtual_t *virt;
 /*#ifdef XAUTH*/
     bool xauth_server;
     bool xauth_client;
@@ -211,6 +232,7 @@ struct connection {
     char *name;
     char *connalias;
     lset_t policy;
+    struct db_sa *ike_policies;
     time_t sa_ike_life_seconds;
     time_t sa_ipsec_life_seconds;
     time_t sa_rekey_margin;
@@ -245,6 +267,8 @@ struct connection {
 
     struct spd_route spd;
 
+    unsigned int first_msgid;		/* what is the first msgid of this conn [0|1] */
+
     /* internal fields: */
 
     unsigned long instance_serial;
@@ -256,6 +280,9 @@ struct connection {
 
     bool initiated;
     bool failed_ikev2;                  /* tried ikev2, but failed */
+
+    bool proposal_can_retry;		/* we will retry if current proposal fails */
+    unsigned int proposal_index;	/* incremented on retry */
 
     /* state object serial number: weak pointers */
     so_serial_t	prospective_parent_sa;  /* state we are still negotiating */
@@ -282,7 +309,8 @@ struct connection {
 
     struct connection *ac_next;	/* all connections list link */
 
-    generalName_t *requested_ca;	/* collected certificate requests */
+    generalName_t *ikev1_requested_ca_names;  /* ikev1 collected certificate requests */
+    generalName_t *ikev2_requested_ca_hashes; /* concatenated SHA1 hashes acceptable CA keys */
 #ifdef XAUTH_USEPAM
     pam_handle_t  *pamh;		/*  PAM handle for that connection  */
 #endif
@@ -344,7 +372,7 @@ extern int initiate_ondemand(const ip_address *our_client
                               , err_t why);
 extern void terminate_connection(const char *nm);
 extern void release_connection(struct connection *c, bool relations);
-extern void delete_connection(struct connection *c, bool relations);
+extern void delete_connection(struct connection *c, bool relations, bool force);
 extern void delete_connections_by_name(const char *name, bool strict);
 extern void delete_every_connection(void);
 extern void delete_sr(struct connection *c, struct spd_route *sr);
